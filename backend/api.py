@@ -129,9 +129,9 @@ def verify_admin_token(token_enviado: str = Depends(header_scheme)):
 @app.get("/api/players/export")
 def export_players(db: Session = Depends(get_db)):
     try:
-        # COALESCE garante que se o clube estiver nulo no banco, ele vire "Sem Clube" no CSV sem quebrar o código
+        # Corrigido para 'nome' e adicionado COALESCE para evitar nulos
         query = text("""
-            SELECT id, name, COALESCE(clube, 'Sem Clube'), rating_std, rating_rpd, rating_blz 
+            SELECT id, nome, COALESCE(clube, 'Sem Clube'), rating_std, rating_rpd, rating_blz 
             FROM players
         """)
         result = db.execute(query).fetchall()
@@ -156,7 +156,6 @@ def export_players(db: Session = Depends(get_db)):
             headers={"Content-Disposition": "attachment; filename=fbp_players_exported.csv"}
         )
     except Exception as e:
-        # Esta linha devolve o erro real do sistema para sabermos exatamente o que quebrou
         raise HTTPException(status_code=500, detail=f"Erro interno no servidor: {str(e)}")
 
 # --- ROTA DE IMPORTAR FPBX (Um gatilho para atualizar a base se precisar) ---
@@ -174,10 +173,26 @@ def import_fpbx_status():
 def home():
     return {"message": "API da Federação Paraibana de Xadrez online!"}
 
-@app.get("/ranking", response_model=List[PlayerResponse], tags=["Consulta Pública"])
+@app.get("/ranking", tags=["Consulta Pública"])
 def get_ranking(db: Session = Depends(get_db)):
-    # Retorna a lista de jogadores ordenada pelo maior Rating Absoluto (Standard)
-    return db.query(PlayerModel).order_by(PlayerModel.rating_std.desc()).all()
+    try:
+        # Corrigido para 'nome' conforme exigido pelo seu banco Neon
+        query = text("SELECT id, nome, clube, rating_std, rating_rpd, rating_blz FROM players ORDER BY rating_std DESC")
+        result = db.execute(query).fetchall()
+        
+        players_list = []
+        for row in result:
+            players_list.append({
+                "id": row[0],
+                "name": row[1], # Mantemos a chave 'name' para o seu React não precisar mudar a estrutura visual
+                "clube": row[2] if row[2] else "Sem Clube",
+                "rating_std": row[3],
+                "rating_rpd": row[4],
+                "rating_blz": row[5]
+            })
+        return players_list
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao buscar ranking: {str(e)}"
 
 @app.get("/player/{player_id}", response_model=PlayerResponse, tags=["Consulta Pública"])
 def get_player(player_id: int, db: Session = Depends(get_db)):
