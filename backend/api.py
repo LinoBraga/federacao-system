@@ -318,28 +318,30 @@ def import_tournament(payload: TournamentImportRequest, db: Session = Depends(ge
         jogadores_atualizados = 0
         nomes_tentados = [] # Para a gente ver o que está acontecendo
 
-        for linha in linhas:
+        # ... (após o 'for linha in linhas[1:]:')
+        
+        for linha in linhas[1:]:
             colunas = linha.find_all("td")
-            if len(colunas) < 5: continue
+            # Agora só exigimos que existam pelo menos 3 colunas (Nome e Elo são as principais)
+            if len(colunas) < 3: continue
             
-            rating_text = colunas[2].text.strip()
-            if not (rating_text.isdigit() and 1000 <= int(rating_text) <= 3000):
-                continue
-                
-            nome_raw = colunas[1].text.strip()
-            # Limpeza mais agressiva para facilitar o encontro no banco
-            nome_limpo = "".join([i for i in nome_raw if not i.isdigit()]).replace("NM","").replace("AFM","").replace("WNM","").replace("AIM","").strip()
+            raw_nome = colunas[1].text.strip()
+            rating_raw = colunas[2].text.strip()
             
-            # Tenta buscar ignorando parte do nome se necessário
-            # A lógica aqui é: se o nome tiver 2 palavras, tenta buscar apenas pelo sobrenome ou parte dele
+            # Limpa o rating de forma bem mais permissiva
+            rating_limpo = "".join(filter(str.isdigit, rating_raw))
+            if not rating_limpo or len(rating_limpo) < 3: continue
+            
+            nome_limpo = "".join([i for i in raw_nome if not i.isdigit()]).replace("NM","").replace("AFM","").replace("WNM","").replace("AIM","").strip()
+            
+            # DEBUG: Imprime no log do Render o que está sendo processado
+            print(f"DEBUG: Processando Nome: '{nome_limpo}' com Rating: '{rating_limpo}'")
+
             stmt = text(f"UPDATE players SET {coluna_alvo} = :rating WHERE LOWER(nome) LIKE LOWER(:nome)")
-            # Usamos o nome limpo com wildcards
-            res = db.execute(stmt, {"rating": int(rating_text), "nome": f"%{nome_limpo}%"})
+            res = db.execute(stmt, {"rating": int(rating_limpo), "nome": f"%{nome_limpo}%"})
             
             if res.rowcount > 0:
                 jogadores_atualizados += 1
-            else:
-                nomes_tentados.append(nome_limpo)
 
         db.commit()
         return {
