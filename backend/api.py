@@ -173,7 +173,6 @@ def get_ranking(db: Session = Depends(get_db)):
         
         players_list = []
         for row in result:
-            # Captura os valores brutos vindos do banco de dados
             r_std = row[3]
             r_rpd = row[4]
             r_blz = row[5]
@@ -182,12 +181,9 @@ def get_ranking(db: Session = Depends(get_db)):
                 "id": row[0],
                 "name": row[1],
                 "clube": row[2] if row[2] else "Sem Clube",
-                
-                # Padrão FPBX: Se não tiver ou for 0, vira 1800. Se tiver, respeita o banco!
                 "rating_std": int(r_std) if (r_std is not None and int(r_std) > 0) else 1800,
                 "rating_rpd": int(r_rpd) if (r_rpd is not None and int(r_rpd) > 0) else 1800,
-                
-                # Blitz Justo: Se tiver valor real no banco, ele MOSTRA. Se for nulo ou 0, vira None (--)
+                # Se após rodar o script o jogador tiver valor, ele mostra! Se continuar null, vira "--"
                 "rating_blz": int(r_blz) if (r_blz is not None and int(r_blz) > 0) else None 
             })
         return players_list
@@ -215,7 +211,63 @@ def create_player(
     db.commit()
     db.refresh(db_player)
     return db_player
+@app.post("/admin/sync-blitz-csv", tags=["Administração (Requer Token)"])
+def sync_blitz_csv(
+    payload: TournamentImportRequest, # Usamos o mesmo modelo para passar o link do CSV bruto se quiser, ou texto
+    db: Session = Depends(get_db),
+    token: str = Depends(verify_admin_token)
+):
+    """
+    Rota para forçar a leitura do CSV original e atualizar os ratings de Blitz
+    que ficaram para trás na primeira importação.
+    """
+    try:
+        # Link do seu CSV (Pode ser o link do GitHub raw ou Google Drive público)
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resposta = requests.get(payload.url, headers=headers)
+        
+        if resposta.status_code != 200:
+            raise HTTPException(status_code=400, detail="Não foi possível ler o arquivo CSV informado.")
 
+        # Lendo o CSV vindo da URL
+        conteudo = StringIO(resposta.text)
+        leitor = csv.DictReader(conteudo)
+        
+        atualizados = 0
+        
+        for linha in leitor:
+            # Pegamos o nome e o rating de Blitz usando os nomes exatos do seu CSV
+            nome = linha.get("Nome") or linha.get("nome")
+            rating_blitz_texto = linha.get("Rating Blitz") or linha.get("Rating_Blitz")
+            
+            if not nome or not rating_blitz_texto:
+                continue
+                
+            # Limpa o texto tirando espaços ou traços e converte para número
+            rating_blitz_texto = "".join(filter(str.isdigit, rating_blitz_texto.strip()))
+            
+            if not rating_blitz_texto:
+                continue # Se a pessoa não tiver rating blitz no CSV, pula ela
+                
+            rating_blitz = int(rating_blitz_texto)
+
+            # Atualiza direto na coluna certa do Neon buscando pelo nome do enxadrista
+            stmt = text("""
+                UPDATE players 
+                SET rating_blz = :rating 
+                WHERE LOWER(nome) = LOWER(:nome)
+            """)
+            resultado = db.execute(stmt, {"rating": rating_blitz, "nome": nome.strip()})
+            
+            if resultado.rowcount > 0:
+                atualizados += 1
+                
+        db.commit()
+        return {"status": "Sucesso", "message": f"Ratings de Blitz corrigidos para {atualizados} enxadristas!"}
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Erro ao sincronizar: {str(e)}")
 @app.patch("/admin/players/{player_id}/ratings", response_model=PlayerResponse, tags=["Administração (Requer Token)"])
 def update_ratings(
     player_id: int, 
