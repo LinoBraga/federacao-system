@@ -326,34 +326,38 @@ def import_tournament(
         jogadores_atualizados = 0
         for linha in tabela.find_all("tr")[1:]:
             colunas = linha.find_all("td")
-            if len(colunas) < 11: continue 
             
-            nome_raw = colunas[1].text.strip()
-            # Limpeza do nome
-            nome_limpo = "".join([i for i in nome_raw if not i.isdigit()]).replace("NM","").replace("AFM","").strip()
-            if "," in nome_limpo:
-                partes = nome_limpo.split(",")
-                nome_final = f"{partes[1].strip()} {partes[0].strip()}"
-            else:
-                nome_final = nome_limpo
-
+            # FILTRO DE SEGURANÇA: Só processa linhas que tenham pelo menos 11 colunas
+            # E que o texto da coluna 10 (variacao) seja um número real
+            if len(colunas) < 11: continue
+            
+            variacao_raw = colunas[10].text.strip().replace(',', '.')
             try:
-                variacao = float(colunas[10].text.strip().replace(',', '.'))
-            except: continue
+                variacao = float(variacao_raw)
+            except ValueError:
+                continue # Pula linhas de cabeçalho ou rodapé como "Yahoo e Co"
             
-            # 2. UPDATE COM TRAVA DE 3000
-            # A trava: (rating + variacao) deve estar entre 800 e 3000
+            # Limpeza do Nome
+            nome_raw = colunas[1].text.strip()
+            nome_limpo = "".join([i for i in nome_raw if not i.isdigit()]).replace("NM","").replace("AFM","").strip()
+            
+            # Se o nome for curto demais ou estranho, pula
+            if len(nome_limpo) < 3: continue
+
+            # UPDATE BLINDADO: A lógica de 3000 está AQUI dentro do SQL
             stmt = text(f"""
                 UPDATE players 
                 SET {coluna_alvo} = CASE 
-                    WHEN ({coluna_alvo} + :variacao) > 3000 THEN 3000 
+                    WHEN {coluna_alvo} IS NULL THEN 1000 + :variacao
+                    WHEN ({coluna_alvo} + :variacao) > 3000 THEN 3000
                     WHEN ({coluna_alvo} + :variacao) < 800 THEN 800
                     ELSE {coluna_alvo} + :variacao 
                 END
                 WHERE LOWER(nome) LIKE LOWER(:nome)
             """)
             
-            termo_busca = f"%{nome_final.split()[0]}%{nome_final.split()[-1]}%"
+            # Busca melhorada
+            termo_busca = f"%{nome_limpo.split()[-1]}%" 
             res = db.execute(stmt, {"variacao": variacao, "nome": termo_busca})
             
             if res.rowcount > 0:
