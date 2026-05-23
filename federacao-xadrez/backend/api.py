@@ -304,72 +304,63 @@ def import_tournament(
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
         resposta = requests.get(payload.url, headers=headers)
-        
         if resposta.status_code != 200:
             raise HTTPException(status_code=400, detail="Erro ao acessar o link.")
 
         soup = BeautifulSoup(resposta.text, "html.parser")
-        
-        # Procura a tabela que tem a maior quantidade de linhas
-        tabela = max(soup.find_all("table"), key=lambda t: len(t.find_all("tr")), default=None)
-        if not tabela:
-            raise HTTPException(status_code=400, detail="Não foi possível identificar a tabela.")
-
-        linhas = tabela.find_all("tr")
-        
-        # 1. Identificação do ritmo
         titulo = soup.title.string.lower() if soup.title else ""
-        if any(x in titulo for x in ["blitz", "relampago", "blz", "blitzs", "3+2", "5+0"]):
+        
+        # 1. DETECÇÃO ROBUSTA
+        if any(x in titulo for x in ["blitz", "relampago", "blz"]):
             coluna_alvo = "rating_blz"
-        elif any(x in titulo for x in ["rapid", "rapido", "rpd", "rapidas", "10+5", "15+10"]):
+        elif any(x in titulo for x in ["rapid", "rapido", "rpd"]):
             coluna_alvo = "rating_rpd"
         else:
             coluna_alvo = "rating_std"
         
-        print(f"DEBUG: Título detectado: '{titulo}' | Coluna escolhida: '{coluna_alvo}'")
-        
-        jogadores_atualizados = 0
+        print(f"DEBUG: Título: {titulo} | Coluna alvo: {coluna_alvo}")
 
-        # 2. Processamento Linha por Linha
-        for linha in linhas[1:]:
+        tabela = max(soup.find_all("table"), key=lambda t: len(t.find_all("tr")), default=None)
+        if not tabela: raise HTTPException(status_code=400, detail="Tabela não encontrada.")
+
+        jogadores_atualizados = 0
+        for linha in tabela.find_all("tr")[1:]:
             colunas = linha.find_all("td")
             if len(colunas) < 11: continue 
             
-            # Limpeza do Nome
             nome_raw = colunas[1].text.strip()
-            nome_limpo = "".join([i for i in nome_raw if not i.isdigit()]).replace("NM","").replace("AFM","").replace("WNM","").replace("AIM","").strip()
-            
+            # Limpeza do nome
+            nome_limpo = "".join([i for i in nome_raw if not i.isdigit()]).replace("NM","").replace("AFM","").strip()
             if "," in nome_limpo:
                 partes = nome_limpo.split(",")
                 nome_final = f"{partes[1].strip()} {partes[0].strip()}"
             else:
                 nome_final = nome_limpo
 
-            # Identifica a variação (delta)
-            variacao_raw = colunas[10].text.strip()
             try:
-                variacao = float(variacao_raw.replace(',', '.'))
-            except ValueError:
-                continue
-
-            # 3. Update Protegido (Só atualiza se o jogador existir e o valor for lógico)
+                variacao = float(colunas[10].text.strip().replace(',', '.'))
+            except: continue
+            
+            # 2. UPDATE COM TRAVA DE 3000
+            # A trava: (rating + variacao) deve estar entre 800 e 3000
             stmt = text(f"""
                 UPDATE players 
-                SET {coluna_alvo} = {coluna_alvo} + :variacao 
+                SET {coluna_alvo} = CASE 
+                    WHEN ({coluna_alvo} + :variacao) > 3000 THEN 3000 
+                    WHEN ({coluna_alvo} + :variacao) < 800 THEN 800
+                    ELSE {coluna_alvo} + :variacao 
+                END
                 WHERE LOWER(nome) LIKE LOWER(:nome)
-                AND ({coluna_alvo} + :variacao) BETWEEN 800 AND 3000
             """)
             
-            # Busca flexível: Primeiro e último nome
-            termo_busca = f"%{nome_final.split()[0]}%{nome_final.split()[-1]}%" if len(nome_final.split()) > 1 else f"%{nome_final}%"
-            
+            termo_busca = f"%{nome_final.split()[0]}%{nome_final.split()[-1]}%"
             res = db.execute(stmt, {"variacao": variacao, "nome": termo_busca})
             
             if res.rowcount > 0:
                 jogadores_atualizados += 1
-
+                
         db.commit()
-        return {"status": "Sucesso", "message": f"Atualizados {jogadores_atualizados} jogadores!"}
+        return {"status": "Sucesso", "message": f"Atualizados {jogadores_atualizados} jogadores."}
 
     except Exception as e:
         db.rollback()
