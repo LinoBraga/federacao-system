@@ -310,12 +310,17 @@ def import_tournament(
 
         soup = BeautifulSoup(resposta.text, "html.parser")
         
-        # BUSCA INTELIGENTE: Pega a tabela que contém a maior quantidade de linhas
-        # Isso ignora o nome da classe CSS e foca no conteúdo
-        tabela = max(soup.find_all("table"), key=lambda t: len(t.find_all("tr")), default=None)
+        # BUSCA REFINADA: Procura uma tabela que tenha a palavra "Nome" no cabeçalho
+        # e que tenha colunas suficientes para ser a tabela de jogadores
+        tabela = None
+        for t in soup.find_all("table"):
+            header = t.get_text().lower()
+            if "nome" in header and "pts" in header and len(t.find_all("tr")) > 10:
+                tabela = t
+                break
         
         if not tabela:
-            raise HTTPException(status_code=400, detail="Não foi possível identificar a tabela de resultados.")
+            raise HTTPException(status_code=400, detail="Não encontrei a tabela de classificação (procurei por 'Nome' e 'Pts').")
 
         linhas = tabela.find_all("tr")
         
