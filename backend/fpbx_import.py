@@ -1,59 +1,71 @@
-import csv
-from models import Player
-from database import SessionLocal  # Importa a conexão do seu próprio projeto
-from fpbx_import import import_official_list
+import pandas as pd
+from sqlalchemy import create_engine, inspect
 
-def executar():
-    print("Conectando ao banco de dados do Neon e iniciando importação...")
+# 1. Sua URL do Neon
+DATABASE_URL = "postgresql://neondb_owner:npg_4vnuWGH6PNbo@ep-lingering-thunder-apxpp9te-pooler.c-7.us-east-1.aws.neon.tech/neondb?sslmode=require"
+ARQUIVO_CSV = "fpbx_players.csv"
+
+try:
+    print("🔌 Conectando ao Banco de Dados do Neon para inspecionar a tabela...")
+    engine = create_engine(DATABASE_URL)
+    inspector = inspect(engine)
     
-    # Abre a conexão com o banco (que já está usando a URL do Neon configurada no seu projeto)
-    db = SessionLocal()
+    # Pega as colunas reais que existem na tabela 'players'
+    colunas_no_banco = [col['name'] for col in inspector.get_columns('players')]
+    print(f"📋 Colunas encontradas na tabela 'players' do seu Neon: {colunas_no_banco}")
+
+    print("\n🔄 Lendo o arquivo CSV da FPBX...")
+    df_csv = pd.read_csv(ARQUIVO_CSV, sep=',')
+    print(f"📋 Colunas originais do CSV: {list(df_csv.columns)}")
+
+    # Regras inteligentes de mapeamento automático baseadas no que costuma mudar
+    mapeamento = {}
     
-    try:
-        # Altere "fpbx_players.csv" para o nome exato do seu arquivo com a extensão (.csv)
-        total = import_official_list(db, "fpbx_players.csv") 
-        print(f"Sucesso! {total} jogadores foram importados/atualizados no banco do Neon.")
-    except Exception as e:
-        print(f"Ocorreu um erro durante a importação: {e}")
-    finally:
-        db.close()
+    # 1. Tratamento do Nome
+    if 'nome' in colunas_no_banco: mapeamento['Nome'] = 'nome'
+    elif 'name' in colunas_no_banco: mapeamento['Nome'] = 'name'
+    
+    # 2. Tratamento do Município
+    if 'municipio' in colunas_no_banco: mapeamento['MUNICÍPIO'] = 'municipio'
+    elif 'city' in colunas_no_banco: mapeamento['MUNICÍPIO'] = 'city'
+    elif 'location' in colunas_no_banco: mapeamento['MUNICÍPIO'] = 'location'
 
-if __name__ == "__main__":
-    executar()
-def import_official_list(db, filepath: str):
+    # 3. Tratamento dos Ratings
+    for csv_col, db_options in [
+        ('Rating STD', ['rating_std', 'rating_standard', 'std_rating']),
+        ('Rating RPD', ['rating_rapid', 'rating_rpd', 'rating_rapido', 'rapid_rating']),
+        ('Rating Blitz', ['rating_blitz', 'blitz_rating'])
+    ]:
+        for opt in db_options:
+            if opt in colunas_no_banco:
+                mapeamento[csv_col] = opt
+                break
 
-    with open(filepath, encoding="utf-8") as f:
-        reader = csv.DictReader(f)
+    # 4. Tratamento da Última Movimentação
+    for opt in ['ultima_movimentacao', 'last_move', 'updated_at']:
+        if opt in colunas_no_banco:
+            mapeamento['Última movimentação'] = opt
+            break
 
-        count = 0
+    print(f"\n🧠 Mapeamento gerado dinamicamente: {mapeamento}")
 
-        for row in reader:
+    print("🧹 Filtrando e renomeando colunas...")
+    # Mantém apenas o que conseguimos mapear que existe no banco
+    df = df_csv[list(mapeamento.keys())].copy()
+    df = df.rename(columns=mapeamento)
 
-            cbx_id = row["cbx_id"]
+    # Identifica quais colunas de rating restaram no DataFrame final para converter em float
+    colunas_std = [v for k, v in mapeamento.items() if 'std' in v or 'standard' in v]
+    colunas_rpd = [v for k, v in mapeamento.items() if 'rapid' in v or 'rpd' in v or 'rapido' in v]
+    colunas_blz = [v for k, v in mapeamento.items() if 'blitz' in v]
 
-            player = db.query(Player).filter_by(cbx_id=cbx_id).first()
+    for col in colunas_std + colunas_rpd + colunas_blz:
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(1800.0).astype(float)
 
-            rating_std = int(row["Rating STD"] or 1800)
-            rating_rapid = int(row["Rating RPD"] or 1800)
-            rating_blitz = int(row["Rating Blitz"] or 1800)
+    print("🚀 Descarregando enxadristas no Neon...")
+    df.to_sql("players", con=engine, if_exists='append', index=False)
 
-            if player:
-                player.name = row["Nome"]
-                player.rating_std = rating_std
-                player.rating_rapid = rating_rapid
-                player.rating_blitz = rating_blitz
+    print(f"✅ Sucesso absoluto! {len(df)} enxadristas foram importados para o Neon.")
 
-            else:
-                player = Player(
-                    cbx_id=cbx_id,
-                    name=row["Nome"],
-                    rating_std=rating_std,
-                    rating_rapid=rating_rapid,
-                    rating_blitz=rating_blitz,
-                )
-                db.add(player)
-
-            count += 1
-
-    db.commit()
-    return count
+except Exception as e:
+    print(f"❌ Erro durante a importação: {e}")
