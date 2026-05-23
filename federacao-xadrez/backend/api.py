@@ -306,45 +306,51 @@ def import_tournament(
         resposta = requests.get(payload.url, headers=headers)
         
         if resposta.status_code != 200:
-            raise HTTPException(status_code=400, detail="Não foi possível acessar o link.")
+            raise HTTPException(status_code=400, detail="Erro ao acessar o link.")
 
         soup = BeautifulSoup(resposta.text, "html.parser")
         
-        # 1. Encontra a tabela procurando pela que tem mais linhas (geralmente a tabela de jogadores)
+        # BUSCA INTELIGENTE: Pega a tabela que contém a maior quantidade de linhas (provável tabela de dados)
+        # Isso evita depender do nome da classe "CRtable"
         tabela = max(soup.find_all("table"), key=lambda t: len(t.find_all("tr")), default=None)
+        
         if not tabela:
-            raise HTTPException(status_code=400, detail="Não encontrei a tabela de resultados.")
+            raise HTTPException(status_code=400, detail="Não foi possível encontrar a tabela de resultados.")
 
         linhas = tabela.find_all("tr")
         
-        # 2. Ritmo de jogo
+        # Detecta ritmo de jogo
         titulo = soup.title.string.lower() if soup.title else ""
-        coluna_alvo = "rating_blz" if any(x in titulo for x in ["blitz", "relampago"]) else ("rating_rpd" if any(x in titulo for x in ["rapid", "rapido"]) else "rating_std")
+        coluna_alvo = "rating_std"
+        if "blitz" in titulo or "relampago" in titulo or "relâmpago" in titulo:
+            coluna_alvo = "rating_blz"
+        elif "rapid" in titulo or "rapido" in titulo or "rápido" in titulo:
+            coluna_alvo = "rating_rpd"
 
         jogadores_atualizados = 0
 
-        # 3. Varre as linhas
-        for linha in linhas:
+        # Varre as linhas (pula a primeira que costuma ser cabeçalho)
+        for linha in linhas[1:]:
             colunas = linha.find_all("td")
-            if len(colunas) < 3: continue # Pula cabeçalhos e linhas curtas
+            if len(colunas) < 3: continue
             
-            # Pela estrutura que você enviou: Nome está na coluna 1, Rating na coluna 2
-            raw_nome = colunas[1].text.strip()
-            rating_str = colunas[2].text.strip()
+            # Ajuste de índices baseado na estrutura que você enviou:
+            # colunas[1] = Nome, colunas[2] = Rating
+            nome_raw = colunas[1].text.strip()
+            rating_raw = colunas[2].text.strip()
             
-            # Limpa o nome (remove títulos como NM, AFM, etc)
-            nome_limpo = "".join([i for i in raw_nome if not i.isdigit()]).replace("NM","").replace("AFM","").replace("WNM","").replace("AIM","").strip()
-            
-            # Limpa o rating
-            rating_limpo = "".join(filter(str.isdigit, rating_str))
+            # Limpa o rating para pegar apenas números
+            rating_limpo = "".join(filter(str.isdigit, rating_raw))
             if not rating_limpo: continue
             
             novo_rating = int(rating_limpo)
+            
+            # Limpeza simples de nome (remove títulos comuns)
+            nome_final = nome_raw.replace("NM", "").replace("AFM", "").replace("WNM", "").strip()
 
-            # 4. Update
+            # Update no banco
             stmt = text(f"UPDATE players SET {coluna_alvo} = :rating WHERE LOWER(nome) LIKE LOWER(:nome)")
-            # Usamos LIKE para aumentar a chance de encontrar o nome mesmo com sobrenomes diferentes
-            resultado = db.execute(stmt, {"rating": novo_rating, "nome": f"%{nome_limpo}%"})
+            resultado = db.execute(stmt, {"rating": novo_rating, "nome": f"%{nome_final}%"})
             
             if resultado.rowcount > 0:
                 jogadores_atualizados += 1
@@ -354,4 +360,4 @@ def import_tournament(
 
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Erro: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
