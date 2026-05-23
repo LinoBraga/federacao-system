@@ -332,7 +332,7 @@ def import_tournament(
         jogadores_atualizados = 0
 
         # 3. Processamento com travas de segurança
-       for linha in linhas[1:]:
+        for linha in linhas[1:]:
             colunas = linha.find_all("td")
             if len(colunas) < 3: continue
             
