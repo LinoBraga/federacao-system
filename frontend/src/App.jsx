@@ -8,7 +8,6 @@ export default function App() {
   const [viewMode, setViewMode] = useState("all");
 
   useEffect(() => {
-    // Corrigido: A URL base aponta para o servidor, e o fetch chama a rota certa
     const API_URL = "https://fpbx-backend.onrender.com";
 
     fetch(`${API_URL}/ranking`)
@@ -16,7 +15,13 @@ export default function App() {
         if (!res.ok) throw new Error("Erro na resposta do servidor");
         return res.json();
       })
-      .then(data => setPlayers(data))
+      .then(data => {
+        // 🔍 Log temporário no console do navegador para você inspecionar a estrutura real que chegou do backend
+        if (data && data.length > 0) {
+          console.log("Exemplo de jogador vindo da API:", data[0]);
+        }
+        setPlayers(data);
+      })
       .catch(err => console.error("Erro ao buscar ranking:", err));
   }, []);
 
@@ -24,19 +29,27 @@ export default function App() {
   const visiblePlayers = useMemo(() => {
     let result = [...players];
 
-    // Função auxiliar para garantir que tratamos números reais na ordenação
+    // Função auxiliar tolerante que aceita variações de nome de campo (blz vs blitz)
     const getRating = (player, field) => {
-      const val = player[field];
+      let val = player[field];
+      
+      // Se estiver procurando blitz e vier nulo, tenta variações comuns
+      if (field === "rating_blz" && (val === undefined || val === null)) {
+        val = player["rating_blitz"] ?? player["blitz"];
+      }
+      if (field === "rating_rpd" && (val === undefined || val === null)) {
+        val = player["rating_rapid"] ?? player["rapid"];
+      }
+
       return val !== undefined && val !== null ? Number(val) : 0;
     };
 
-    // 1. Ordenação segura do Maior para o Menor (b - a) usando as siglas do banco
+    // 1. Ordenação segura do Maior para o Menor (b - a)
     if (viewMode === "top10_rapid") {
       result.sort((a, b) => getRating(b, "rating_rpd") - getRating(a, "rating_rpd"));
     } else if (viewMode === "top10_blitz") {
       result.sort((a, b) => getRating(b, "rating_blz") - getRating(a, "rating_blz"));
     } else {
-      // Padrão para "all" e "top10_std"
       result.sort((a, b) => getRating(b, "rating_std") - getRating(a, "rating_std"));
     }
 
@@ -130,6 +143,9 @@ export default function App() {
             const isRapidActive = viewMode === "top10_rapid";
             const isBlitzActive = viewMode === "top10_blitz";
 
+            // Encontra o valor do Blitz buscando em chaves alternativas se necessário
+            const blitzValue = p.rating_blz ?? p.rating_blitz ?? p.blitz;
+
             return (
               <div key={`${viewMode}-${p.id || p.actualRank}`} style={styles.playerRow}>
                 
@@ -141,7 +157,7 @@ export default function App() {
                   <div style={styles.playerName}>{p.name}</div>
                 </div>
 
-                {/* Lado Direito: Bloco de Ratings (Ajustado com os nomes exatos do Neon) */}
+                {/* Lado Direito: Bloco de Ratings */}
                 <div style={styles.ratingsGroup}>
                   <div style={{ ...styles.ratingTag, ...(isStdActive ? styles.activeRatingTag : {}) }}>
                     <span style={styles.ratingLabel}>STD</span>
@@ -149,11 +165,13 @@ export default function App() {
                   </div>
                   <div style={{ ...styles.ratingTag, ...(isRapidActive ? styles.activeRatingTag : {}) }}>
                     <span style={styles.ratingLabel}>RPD</span>
-                    <span style={styles.ratingValue}>{p.rating_rpd ?? "—"}</span>
+                    <span style={styles.ratingValue}>{p.rating_rpd ?? p.rating_rapid ?? "—"}</span>
                   </div>
                   <div style={{ ...styles.ratingTag, ...(isBlitzActive ? styles.activeRatingTag : {}) }}>
                     <span style={styles.ratingLabel}>BLZ</span>
-                    <span style={styles.ratingValue}>{p.rating_blz ?? "—"}</span>
+                    <span style={styles.ratingValue}>
+                      {blitzValue !== undefined && blitzValue !== null && blitzValue !== "" ? String(blitzValue) : "—"}
+                    </span>
                   </div>
                 </div>
 
@@ -166,7 +184,6 @@ export default function App() {
   );
 }
 
-// ... (Seus estilos continuam idênticos abaixo)
 const styles = {
   container: {
     minHeight: "100vh",
