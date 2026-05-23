@@ -5,10 +5,13 @@ export default function App() {
   const [search, setSearch] = useState("");
   
   // viewMode: "all", "top10_std", "top10_rapid" ou "top10_blitz"
-  const [viewMode, setViewMode] = useState("all");
+  cconst [viewMode, setViewMode] = useState("all");
 
   useEffect(() => {
-    fetch("http://127.0.0.1:8000/ranking")
+    // Pega o link do Render configurado na Vercel. Se não achar, usa o seu PC local.
+    const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+
+    fetch(`${API_URL}/ranking`)
       .then(res => res.json())
       .then(data => setPlayers(data))
       .catch(err => console.error("Erro ao buscar ranking:", err));
