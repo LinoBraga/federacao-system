@@ -58,9 +58,9 @@ Base.metadata.create_all(bind=engine)
 class PlayerBase(BaseModel):
     nome: str
     clube: str = "Sem Clube"
-    rating_std: int = 1000
-    rating_rpd: int = 1000
-    rating_blz: int = 1000
+    rating_std: int = 1800
+    rating_rpd: int = 1800
+    rating_blz: int = 1800
 
 class PlayerResponse(PlayerBase):
     id: int
@@ -175,7 +175,18 @@ def home():
 @app.get("/ranking", tags=["Consulta Pública"])
 def get_ranking(db: Session = Depends(get_db)):
     try:
-        query = text("SELECT id, nome, clube, rating_std, rating_rpd, rating_blz FROM players ORDER BY rating_std DESC")
+        # Tenta buscar por rating_blz, se der erro de coluna, tente mudar o SQL abaixo para rating_blitz
+        query = text("""
+            SELECT 
+                id, 
+                nome, 
+                clube, 
+                COALESCE(rating_std, 0), 
+                COALESCE(rating_rpd, 0), 
+                COALESCE(rating_blz, 0) 
+            FROM players 
+            ORDER BY rating_std DESC
+        """)
         result = db.execute(query).fetchall()
         
         players_list = []
@@ -184,12 +195,13 @@ def get_ranking(db: Session = Depends(get_db)):
                 "id": row[0],
                 "name": row[1],
                 "clube": row[2] if row[2] else "Sem Clube",
-                "rating_std": row[3],
-                "rating_rpd": row[4],
-                "rating_blz": row[5]
+                "rating_std": int(row[3]),
+                "rating_rpd": int(row[4]),
+                "rating_blz": int(row[5])  # Força o valor tratado a ir como número inteiro para o React
             })
         return players_list
     except Exception as e:
+        # Se o banco reclamar que 'rating_blz' não existe, o erro vai aparecer claramente no log do Render
         raise HTTPException(status_code=500, detail=f"Erro ao buscar ranking: {str(e)}")
 @app.get("/player/{player_id}", response_model=PlayerResponse, tags=["Consulta Pública"])
 def get_player(player_id: int, db: Session = Depends(get_db)):
