@@ -333,28 +333,37 @@ def import_tournament(
 
         # 3. Processamento com travas de segurança
        # Dentro do loop for...
+       # 3. Processamento com travas de segurança
         for linha in linhas[1:]:
             colunas = linha.find_all("td")
-            if len(colunas) < 11: continue # A tabela tem 11 colunas conforme a imagem
+            if len(colunas) < 11: continue 
             
-            # 1. Identifica o Nome (Coluna 1)
+            # 1. Identifica e limpa o Nome
             nome_raw = colunas[1].text.strip()
             nome_limpo = "".join([i for i in nome_raw if not i.isdigit()]).replace("NM","").replace("AFM","").replace("WNM","").replace("AIM","").strip()
             
-            # 2. Identifica a variação rtg+/- (Última coluna - índice 10)
+            # --- LÓGICA DE INVERSÃO DE NOME (Sobrenome, Nome -> Nome Sobrenome) ---
+            if "," in nome_limpo:
+                partes = nome_limpo.split(",")
+                if len(partes) >= 2:
+                    nome_final = f"{partes[1].strip()} {partes[0].strip()}"
+                else:
+                    nome_final = nome_limpo
+            else:
+                nome_final = nome_limpo
+            # ---------------------------------------------------------------------
+            
+            # 2. Identifica a variação rtg+/-
             variacao_raw = colunas[10].text.strip()
             try:
-                # Converte para float porque pode ter vírgula ou casas decimais
                 variacao = float(variacao_raw.replace(',', '.'))
             except ValueError:
-                continue # Pula se não for um número válido
+                continue 
             
-            # 3. Busca o jogador no banco e aplica a soma
-            # Usamos o nome limpo para localizar
-            palavras = [p for p in nome_limpo.lower().split() if len(p) > 2]
+            # 3. Busca o jogador no banco (usando o nome já invertido/padronizado)
+            palavras = [p for p in nome_final.lower().split() if len(p) > 2]
             termo_busca = "%" + "%".join(palavras) + "%"
 
-            # O SQL faz a mágica: ele soma o valor ao que já está no banco
             stmt = text(f"""
                 UPDATE players 
                 SET {coluna_alvo} = {coluna_alvo} + :variacao 
@@ -365,7 +374,9 @@ def import_tournament(
             
             if res.rowcount > 0:
                 jogadores_atualizados += 1
-
+            else:
+                # Opcional: print para debug se quiser ver no Log o que ainda falta
+                print(f"DEBUG: Não achou: {nome_final}")
         db.commit()
         return {"status": "Sucesso", "message": f"Atualizados {jogadores_atualizados} jogadores."}
 
