@@ -353,7 +353,28 @@ def import_tournament(
             # DEBUG: O Render vai gravar isso na aba "Logs"
             print(f"DEBUG: Tentando atualizar '{nome_limpo}' com termo '{termo_busca}'")
 
+            # ... (código dentro do for, logo após o nome_limpo definido)
+
+            # Transforma o nome vindo do site em uma lista de palavras, ignorando preposições comuns
+            palavras = [p for p in nome_limpo.lower().split() if len(p) > 2]
+            
+            # Monta um termo de busca que contenha o máximo de partes possíveis do nome
+            # Exemplo: Se o nome é "Daniel Fernandes Viana", busca por "%daniel%fernandes%viana%"
+            if len(palavras) >= 2:
+                termo_busca = "%" + "%".join(palavras) + "%"
+            else:
+                termo_busca = f"%{nome_limpo}%"
+
+            # O segredo: usamos o unaccent se o banco permitir, ou apenas o LOWER.
+            # Se o banco for PostgreSQL (Neon), o LOWER já ajuda muito.
             stmt = text(f"UPDATE players SET {coluna_alvo} = :rating WHERE LOWER(nome) LIKE LOWER(:nome)")
+            res = db.execute(stmt, {"rating": novo_rating, "nome": termo_busca})
+            
+            if res.rowcount > 0:
+                jogadores_atualizados += 1
+            else:
+                # Opcional: print para ver o que falhou no log do Render
+                print(f"DEBUG: Falha ao encontrar: {nome_limpo} (Termo: {termo_busca})")
             res = db.execute(stmt, {"rating": novo_rating, "nome": termo_busca})
             
             if res.rowcount > 0:
