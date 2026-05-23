@@ -173,6 +173,7 @@ def get_ranking(db: Session = Depends(get_db)):
         
         players_list = []
         for row in result:
+            # Captura os valores brutos do banco de dados
             r_std = row[3]
             r_rpd = row[4]
             r_blz = row[5]
@@ -181,10 +182,15 @@ def get_ranking(db: Session = Depends(get_db)):
                 "id": row[0],
                 "name": row[1],
                 "clube": row[2] if row[2] else "Sem Clube",
+                
+                # Standard: Se nulo ou 0, assume 1800
                 "rating_std": int(r_std) if (r_std is not None and int(r_std) > 0) else 1800,
+                
+                # Rápido: Se nulo ou 0, assume 1800
                 "rating_rpd": int(r_rpd) if (r_rpd is not None and int(r_rpd) > 0) else 1800,
-                # Se após rodar o script o jogador tiver valor, ele mostra! Se continuar null, vira "--"
-                "rating_blz": int(r_blz) if (r_blz is not None and int(r_blz) > 0) else None 
+                
+                # Blitz (ATUALIZADO): Se tiver valor real, mostra. Se for nulo ou 0, assume 1800 também!
+                "rating_blz": int(r_blz) if (r_blz is not None and int(r_blz) > 0) else 1800 
             })
         return players_list
     except Exception as e:
