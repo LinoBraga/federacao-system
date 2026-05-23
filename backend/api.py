@@ -296,60 +296,72 @@ def update_ratings(
 
 # 🚀 ROTA DE IMPORTAÇÃO AUTOMÁTICA VIA LINK DO CHESS-RESULTS
 @app.post("/admin/import-tournament", tags=["Administração (Requer Token)"])
-def import_tournament(payload: TournamentImportRequest, db: Session = Depends(get_db), token: str = Depends(verify_admin_token)):
+def import_tournament(
+    payload: TournamentImportRequest, 
+    db: Session = Depends(get_db),
+    token: str = Depends(verify_admin_token)
+):
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
         resposta = requests.get(payload.url, headers=headers)
+        
+        if resposta.status_code != 200:
+            raise HTTPException(status_code=400, detail="Não foi possível acessar o link.")
+
         soup = BeautifulSoup(resposta.text, "html.parser")
         
+        # 1. Busca rigorosa pela tabela de jogadores
+        # Procura a tabela que contém as palavras chave de um torneio de xadrez
         tabela = None
         for t in soup.find_all("table"):
-            if "nome" in t.get_text().lower() and len(t.find_all("tr")) > 10:
-                tabela = t
-                break
+            text_tabela = t.get_text().lower()
+            if "nome" in text_tabela and ("elo" in text_tabela or "rating" in text_tabela):
+                if len(t.find_all("tr")) > 5:
+                    tabela = t
+                    break
         
         if not tabela:
-            raise HTTPException(status_code=400, detail="Tabela não encontrada.")
+            raise HTTPException(status_code=400, detail="Tabela de resultados não encontrada no formato esperado.")
 
         linhas = tabela.find_all("tr")
+        
+        # 2. Identifica o ritmo
         titulo = soup.title.string.lower() if soup.title else ""
         coluna_alvo = "rating_blz" if "blitz" in titulo else ("rating_rpd" if "rapid" in titulo else "rating_std")
 
         jogadores_atualizados = 0
-        nomes_tentados = [] # Para a gente ver o que está acontecendo
 
-        # ... (após o 'for linha in linhas[1:]:')
-        
+        # 3. Processamento com travas de segurança
         for linha in linhas[1:]:
             colunas = linha.find_all("td")
-            # Agora só exigimos que existam pelo menos 3 colunas (Nome e Elo são as principais)
             if len(colunas) < 3: continue
             
-            raw_nome = colunas[1].text.strip()
+            # Extração segura do rating
             rating_raw = colunas[2].text.strip()
-            
-            # Limpa o rating de forma bem mais permissiva
             rating_limpo = "".join(filter(str.isdigit, rating_raw))
-            if not rating_limpo or len(rating_limpo) < 3: continue
             
-            nome_limpo = "".join([i for i in raw_nome if not i.isdigit()]).replace("NM","").replace("AFM","").replace("WNM","").replace("AIM","").strip()
+            # TRAVA DE SEGURANÇA: ignora valores vazios ou absurdamente grandes (rodapés)
+            if not rating_limpo or len(rating_limpo) > 4:
+                continue
+                
+            novo_rating = int(rating_limpo)
             
-            # DEBUG: Imprime no log do Render o que está sendo processado
-            print(f"DEBUG: Processando Nome: '{nome_limpo}' com Rating: '{rating_limpo}'")
+            # Extração e limpeza do nome
+            nome_raw = colunas[1].text.strip()
+            nome_limpo = "".join([i for i in nome_raw if not i.isdigit()]).replace("NM","").replace("AFM","").replace("WNM","").replace("AIM","").strip()
+            
+            if len(nome_limpo) < 3: continue
 
+            # 4. Update
             stmt = text(f"UPDATE players SET {coluna_alvo} = :rating WHERE LOWER(nome) LIKE LOWER(:nome)")
-            res = db.execute(stmt, {"rating": int(rating_limpo), "nome": f"%{nome_limpo}%"})
+            res = db.execute(stmt, {"rating": novo_rating, "nome": f"%{nome_limpo}%"})
             
             if res.rowcount > 0:
                 jogadores_atualizados += 1
 
         db.commit()
-        return {
-            "status": "Sucesso", 
-            "message": f"Atualizados {jogadores_atualizados} jogadores.",
-            "nao_encontrados": nomes_tentados[:5] # Retorna os 5 primeiros que não achou para diagnosticarmos
-        }
+        return {"status": "Sucesso", "message": f"Atualizados {jogadores_atualizados} jogadores."}
 
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Erro: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erro ao processar torneio: {str(e)}")
