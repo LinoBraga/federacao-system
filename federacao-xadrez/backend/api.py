@@ -310,45 +310,37 @@ def import_tournament(
 
         soup = BeautifulSoup(resposta.text, "html.parser")
         
-        # BUSCA INTELIGENTE: Pega a tabela que contém a maior quantidade de linhas (provável tabela de dados)
-        # Isso evita depender do nome da classe "CRtable"
+        # Procura a tabela que tem a maior quantidade de linhas (independente de classe)
         tabela = max(soup.find_all("table"), key=lambda t: len(t.find_all("tr")), default=None)
         
         if not tabela:
-            raise HTTPException(status_code=400, detail="Não foi possível encontrar a tabela de resultados.")
+            raise HTTPException(status_code=400, detail="Não foi possível identificar a tabela.")
 
         linhas = tabela.find_all("tr")
         
-        # Detecta ritmo de jogo
+        # Ritmo
         titulo = soup.title.string.lower() if soup.title else ""
-        coluna_alvo = "rating_std"
-        if "blitz" in titulo or "relampago" in titulo or "relâmpago" in titulo:
-            coluna_alvo = "rating_blz"
-        elif "rapid" in titulo or "rapido" in titulo or "rápido" in titulo:
-            coluna_alvo = "rating_rpd"
+        coluna_alvo = "rating_blz" if any(x in titulo for x in ["blitz", "relampago"]) else ("rating_rpd" if any(x in titulo for x in ["rapid", "rapido"]) else "rating_std")
 
         jogadores_atualizados = 0
 
-        # Varre as linhas (pula a primeira que costuma ser cabeçalho)
+        # Loop (pula o cabeçalho)
         for linha in linhas[1:]:
             colunas = linha.find_all("td")
             if len(colunas) < 3: continue
             
-            # Ajuste de índices baseado na estrutura que você enviou:
-            # colunas[1] = Nome, colunas[2] = Rating
+            # Ajuste de índices: Nome na coluna 1, Rating na coluna 2
             nome_raw = colunas[1].text.strip()
             rating_raw = colunas[2].text.strip()
             
-            # Limpa o rating para pegar apenas números
+            # Limpeza
             rating_limpo = "".join(filter(str.isdigit, rating_raw))
             if not rating_limpo: continue
             
             novo_rating = int(rating_limpo)
-            
-            # Limpeza simples de nome (remove títulos comuns)
-            nome_final = nome_raw.replace("NM", "").replace("AFM", "").replace("WNM", "").strip()
+            # Remove títulos para casar com o nome no banco
+            nome_final = nome_raw.replace("NM", "").replace("AFM", "").replace("WNM", "").replace("AIM", "").strip()
 
-            # Update no banco
             stmt = text(f"UPDATE players SET {coluna_alvo} = :rating WHERE LOWER(nome) LIKE LOWER(:nome)")
             resultado = db.execute(stmt, {"rating": novo_rating, "nome": f"%{nome_final}%"})
             
@@ -356,8 +348,8 @@ def import_tournament(
                 jogadores_atualizados += 1
 
         db.commit()
-        return {"status": "Sucesso", "message": f"Atualizados {jogadores_atualizados} enxadristas!"}
+        return {"status": "Sucesso", "message": f"Atualizados {jogadores_atualizados} jogadores!"}
 
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
