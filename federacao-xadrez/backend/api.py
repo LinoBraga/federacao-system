@@ -297,75 +297,169 @@ def update_ratings(
 # 🚀 ROTA DE IMPORTAÇÃO AUTOMÁTICA VIA LINK DO CHESS-RESULTS
 @app.post("/admin/import-tournament", tags=["Administração (Requer Token)"])
 def import_tournament(
-    payload: TournamentImportRequest, 
+    payload: TournamentImportRequest,
     db: Session = Depends(get_db),
     token: str = Depends(verify_admin_token)
 ):
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
+
         resposta = requests.get(payload.url, headers=headers)
+
         if resposta.status_code != 200:
-            raise HTTPException(status_code=400, detail="Erro ao acessar o link.")
+            raise HTTPException(
+                status_code=400,
+                detail="Erro ao acessar o link do Chess-Results."
+            )
 
         soup = BeautifulSoup(resposta.text, "html.parser")
-        titulo = soup.title.string.lower() if soup.title else ""
-        
-        # 1. DETECÇÃO ROBUSTA
-        if any(x in titulo for x in ["blitz", "relampago", "blz"]):
+
+        # ==========================================
+        # DEFINIÇÃO SEGURA DO TIPO DE TORNEIO
+        # ==========================================
+
+        tipo = payload.tipo.lower().strip()
+
+        if tipo == "blitz":
             coluna_alvo = "rating_blz"
-        elif any(x in titulo for x in ["rapid", "rapido", "rpd"]):
+
+        elif tipo == "rapid":
             coluna_alvo = "rating_rpd"
+
         else:
             coluna_alvo = "rating_std"
-        
-        print(f"DEBUG: Título: {titulo} | Coluna alvo: {coluna_alvo}")
 
-        tabela = max(soup.find_all("table"), key=lambda t: len(t.find_all("tr")), default=None)
-        if not tabela: raise HTTPException(status_code=400, detail="Tabela não encontrada.")
+        print(f"IMPORTANDO PARA -> {coluna_alvo}")
+
+        # ==========================================
+        # ENCONTRA A MAIOR TABELA
+        # ==========================================
+
+        tabelas = soup.find_all("table")
+
+        if not tabelas:
+            raise HTTPException(
+                status_code=400,
+                detail="Nenhuma tabela encontrada."
+            )
+
+        tabela = max(
+            tabelas,
+            key=lambda t: len(t.find_all("tr"))
+        )
+
+        linhas = tabela.find_all("tr")
 
         jogadores_atualizados = 0
-        for linha in tabela.find_all("tr")[1:]:
-            colunas = linha.find_all("td")
-            
-            # FILTRO DE SEGURANÇA: Só processa linhas que tenham pelo menos 11 colunas
-            # E que o texto da coluna 10 (variacao) seja um número real
-            if len(colunas) < 11: continue
-            
-            variacao_raw = colunas[10].text.strip().replace(',', '.')
-            try:
-                variacao = float(variacao_raw)
-            except ValueError:
-                continue # Pula linhas de cabeçalho ou rodapé como "Yahoo e Co"
-            
-            # Limpeza do Nome
-            nome_raw = colunas[1].text.strip()
-            nome_limpo = "".join([i for i in nome_raw if not i.isdigit()]).replace("NM","").replace("AFM","").strip()
-            
-            # Se o nome for curto demais ou estranho, pula
-            if len(nome_limpo) < 3: continue
 
-            # UPDATE BLINDADO: A lógica de 3000 está AQUI dentro do SQL
+        # ==========================================
+        # PROCESSAMENTO DAS LINHAS
+        # ==========================================
+
+        for linha in linhas[1:]:
+
+            colunas = linha.find_all("td")
+
+            # Segurança
+            if len(colunas) < 11:
+                continue
+
+            # ==========================================
+            # VARIAÇÃO
+            # ==========================================
+
+            variacao_raw = (
+                colunas[10]
+                .text
+                .strip()
+                .replace(",", ".")
+            )
+
+            try:
+                variacao = round(float(variacao_raw))
+            except:
+                continue
+
+            # ==========================================
+            # NOME
+            # ==========================================
+
+            nome_raw = colunas[1].text.strip()
+
+            # Remove números
+            nome_limpo = "".join(
+                c for c in nome_raw
+                if not c.isdigit()
+            )
+
+            # Remove títulos corretamente
+            titulos = [
+                "GM", "IM", "FM", "CM",
+                "WGM", "WIM", "WFM", "WCM",
+                "NM", "AFM"
+            ]
+
+            palavras = nome_limpo.split()
+
+            palavras_filtradas = [
+                p for p in palavras
+                if p.upper() not in titulos
+            ]
+
+            nome_limpo = " ".join(palavras_filtradas).strip()
+
+            if len(nome_limpo) < 3:
+                continue
+
+            # ==========================================
+            # UPDATE SEGURO
+            # ==========================================
+
             stmt = text(f"""
-                UPDATE players 
-                SET {coluna_alvo} = CASE 
-                    WHEN {coluna_alvo} IS NULL THEN 1000 + :variacao
-                    WHEN ({coluna_alvo} + :variacao) > 3000 THEN 3000
-                    WHEN ({coluna_alvo} + :variacao) < 800 THEN 800
-                    ELSE {coluna_alvo} + :variacao 
+                UPDATE players
+                SET {coluna_alvo} = CASE
+
+                    WHEN {coluna_alvo} IS NULL
+                        THEN 1000 + :variacao
+
+                    WHEN ({coluna_alvo} + :variacao) > 3000
+                        THEN 3000
+
+                    WHEN ({coluna_alvo} + :variacao) < 800
+                        THEN 800
+
+                    ELSE ROUND({coluna_alvo} + :variacao)
+
                 END
-                WHERE LOWER(nome) LIKE LOWER(:nome)
+
+                WHERE LOWER(TRIM(nome)) = :nome
             """)
-            
-            # Busca melhorada
-            termo_busca = f"%{nome_limpo.split()[-1]}%" 
-            res = db.execute(stmt, {"variacao": variacao, "nome": termo_busca})
-            
-            if res.rowcount > 0:
+
+            resultado = db.execute(
+                stmt,
+                {
+                    "variacao": variacao,
+                    "nome": nome_limpo.lower()
+                }
+            )
+
+            if resultado.rowcount > 0:
                 jogadores_atualizados += 1
-                
+                print(f"Atualizado: {nome_limpo} ({variacao})")
+
         db.commit()
-        return {"status": "Sucesso", "message": f"Atualizados {jogadores_atualizados} jogadores."}
+
+        return {
+            "status": "Sucesso",
+            "message": f"{jogadores_atualizados} jogadores atualizados.",
+            "tipo": coluna_alvo
+        }
 
     except Exception as e:
+
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
