@@ -67,12 +67,13 @@ class PlayerResponse(PlayerBase):
 
 class RatingUpdate(BaseModel):
     rating_std: int = None
-    rating_rpd: int = None
-    rating_blz: int = None
+    rating_rapid: int = None
+    rating_blitz: int = None
 
 # Modelo criado para receber a URL do Chess-Results com segurança
 class TournamentImportRequest(BaseModel):
     url: str
+    tipo: str
 
 
 # ==========================================
@@ -297,89 +298,169 @@ def update_ratings(
 # 🚀 ROTA DE IMPORTAÇÃO AUTOMÁTICA VIA LINK DO CHESS-RESULTS
 @app.post("/admin/import-tournament", tags=["Administração (Requer Token)"])
 def import_tournament(
-    payload: TournamentImportRequest, 
+    payload: TournamentImportRequest,
     db: Session = Depends(get_db),
     token: str = Depends(verify_admin_token)
 ):
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
+
         resposta = requests.get(payload.url, headers=headers)
-        
+
         if resposta.status_code != 200:
-            raise HTTPException(status_code=400, detail="Não foi possível acessar o link.")
+            raise HTTPException(
+                status_code=400,
+                detail="Erro ao acessar o link do Chess-Results."
+            )
 
         soup = BeautifulSoup(resposta.text, "html.parser")
-        
-        # 1. Busca rigorosa pela tabela de jogadores
-        # Procura a tabela que contém as palavras chave de um torneio de xadrez
-        tabela = None
-        for t in soup.find_all("table"):
-            text_tabela = t.get_text().lower()
-            if "nome" in text_tabela and ("elo" in text_tabela or "rating" in text_tabela):
-                if len(t.find_all("tr")) > 5:
-                    tabela = t
-                    break
-        
-        if not tabela:
-            raise HTTPException(status_code=400, detail="Tabela de resultados não encontrada no formato esperado.")
+
+        # ==========================================
+        # DEFINIÇÃO SEGURA DO TIPO DE TORNEIO
+        # ==========================================
+
+        tipo = payload.tipo.lower().strip()
+
+        if tipo == "blitz":
+            coluna_alvo = "rating_blz"
+
+        elif tipo == "rapid":
+            coluna_alvo = "rating_rpd"
+
+        else:
+            coluna_alvo = "rating_std"
+
+        print(f"IMPORTANDO PARA -> {coluna_alvo}")
+
+        # ==========================================
+        # ENCONTRA A MAIOR TABELA
+        # ==========================================
+
+        tabelas = soup.find_all("table")
+
+        if not tabelas:
+            raise HTTPException(
+                status_code=400,
+                detail="Nenhuma tabela encontrada."
+            )
+
+        tabela = max(
+            tabelas,
+            key=lambda t: len(t.find_all("tr"))
+        )
 
         linhas = tabela.find_all("tr")
-        
-        # 2. Identifica o ritmo
-        titulo = soup.title.string.lower() if soup.title else ""
-        coluna_alvo = "rating_blz" if "blitz" in titulo else ("rating_rpd" if "rapid" in titulo else "rating_std")
 
         jogadores_atualizados = 0
 
-        # 3. Processamento com travas de segurança
-       # Dentro do loop for...
-       # 3. Processamento com travas de segurança
+        # ==========================================
+        # PROCESSAMENTO DAS LINHAS
+        # ==========================================
+
         for linha in linhas[1:]:
+
             colunas = linha.find_all("td")
-            if len(colunas) < 11: continue 
-            
-            # 1. Identifica e limpa o Nome
-            nome_raw = colunas[1].text.strip()
-            nome_limpo = "".join([i for i in nome_raw if not i.isdigit()]).replace("NM","").replace("AFM","").replace("WNM","").replace("AIM","").strip()
-            
-            # --- LÓGICA DE INVERSÃO DE NOME (Sobrenome, Nome -> Nome Sobrenome) ---
-            if "," in nome_limpo:
-                partes = nome_limpo.split(",")
-                if len(partes) >= 2:
-                    nome_final = f"{partes[1].strip()} {partes[0].strip()}"
-                else:
-                    nome_final = nome_limpo
-            else:
-                nome_final = nome_limpo
-            # ---------------------------------------------------------------------
-            
-            # 2. Identifica a variação rtg+/-
-            variacao_raw = colunas[10].text.strip()
+
+            # Segurança
+            if len(colunas) < 11:
+                continue
+
+            # ==========================================
+            # VARIAÇÃO
+            # ==========================================
+
+            variacao_raw = (
+                colunas[10]
+                .text
+                .strip()
+                .replace(",", ".")
+            )
+
             try:
-                variacao = float(variacao_raw.replace(',', '.'))
-            except ValueError:
-                continue 
-            
-            # 3. Busca o jogador no banco (usando o nome já invertido/padronizado)
-            palavras = [p for p in nome_final.lower().split() if len(p) > 2]
-            termo_busca = "%" + "%".join(palavras) + "%"
+                variacao = round(float(variacao_raw))
+            except:
+                continue
+
+            # ==========================================
+            # NOME
+            # ==========================================
+
+            nome_raw = colunas[1].text.strip()
+
+            # Remove números
+            nome_limpo = "".join(
+                c for c in nome_raw
+                if not c.isdigit()
+            )
+
+            # Remove títulos corretamente
+            titulos = [
+                "GM", "IM", "FM", "CM",
+                "WGM", "WIM", "WFM", "WCM",
+                "NM", "AFM"
+            ]
+
+            palavras = nome_limpo.split()
+
+            palavras_filtradas = [
+                p for p in palavras
+                if p.upper() not in titulos
+            ]
+
+            nome_limpo = " ".join(palavras_filtradas).strip()
+
+            if len(nome_limpo) < 3:
+                continue
+
+            # ==========================================
+            # UPDATE SEGURO
+            # ==========================================
 
             stmt = text(f"""
-                UPDATE players 
-                SET {coluna_alvo} = {coluna_alvo} + :variacao 
-                WHERE LOWER(nome) LIKE LOWER(:nome)
+                UPDATE players
+                SET {coluna_alvo} = CASE
+
+                    WHEN {coluna_alvo} IS NULL
+                        THEN 1000 + :variacao
+
+                    WHEN ({coluna_alvo} + :variacao) > 3000
+                        THEN 3000
+
+                    WHEN ({coluna_alvo} + :variacao) < 800
+                        THEN 800
+
+                    ELSE ROUND({coluna_alvo} + :variacao)
+
+                END
+
+                WHERE LOWER(TRIM(nome)) = :nome
             """)
-            
-            res = db.execute(stmt, {"variacao": variacao, "nome": termo_busca})
-            
-            if res.rowcount > 0:
+
+            resultado = db.execute(
+                stmt,
+                {
+                    "variacao": variacao,
+                    "nome": nome_limpo.lower()
+                }
+            )
+
+            if resultado.rowcount > 0:
                 jogadores_atualizados += 1
-            else:
-                # Opcional: print para debug se quiser ver no Log o que ainda falta
-                print(f"DEBUG: Não achou: {nome_final}")
+                print(f"Atualizado: {nome_limpo} ({variacao})")
+
         db.commit()
-        return {"status": "Sucesso", "message": f"Atualizados {jogadores_atualizados} jogadores."}
+
+        return {
+            "status": "Sucesso",
+            "message": f"{jogadores_atualizados} jogadores atualizados.",
+            "tipo": coluna_alvo
+        }
 
     except Exception as e:
+
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Erro ao processar torneio: {str(e)}")
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
