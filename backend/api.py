@@ -362,7 +362,7 @@ def import_tournament(
             colunas = linha.find_all("td")
             print([c.text.strip() for c in colunas])
             # Segurança
-            if len(colunas) < 11:
+            if len(colunas) < 12:
                 continue
 
             # ==========================================
@@ -420,8 +420,11 @@ def import_tournament(
 # UPDATE SEGURO
 # ==========================================
 
-            partes = nome_limpo.lower().split()
-
+            partes = [
+                p.strip()
+                for p in nome_limpo.lower().split()
+                if len(p.strip()) > 1
+            ]
             if len(partes) < 2:
                 continue
 
@@ -430,7 +433,7 @@ def import_tournament(
                 "variacao": variacao
             }
 
-            for i, parte in enumerate(partes):
+            for i, parte in enumerate(partes[:3]):
                 chave = f"parte{i}"
 
                 condicoes.append(
@@ -440,7 +443,8 @@ def import_tournament(
                 parametros[chave] = f"%{parte}%"
 
             where_sql = " AND ".join(condicoes)
-
+            if not where_sql:
+                continue
             stmt = text(f"""
                 UPDATE players
                 SET {coluna_alvo} = CASE
