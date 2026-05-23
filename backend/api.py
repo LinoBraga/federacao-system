@@ -400,6 +400,20 @@ def import_tournament(
 
             # 4. UPDATE SEGURO NO BANCO
             # (Aqui mantém a sua lógica de SQL que já estava funcionando)
+            # 4. LIMPEZA PROFUNDA DE SUFIXOS
+            # Remove sufixos que não fazem parte do nome civil
+            sufixos = [" ME ", " MEF ", " AFM ", " WNM ", " NM ", " WFM "]
+            nome_limpo_busca = f" {nome_final} "
+            for s in sufixos:
+                nome_limpo_busca = nome_limpo_busca.replace(s, " ")
+            
+            nome_limpo_busca = nome_limpo_busca.strip()
+            partes_busca = [p for p in nome_limpo_busca.lower().split() if len(p) > 2]
+            
+            if len(partes_busca) < 2: continue
+
+            # 5. UPDATE USANDO NOME LIMPO
+            # Buscamos pelo primeiro e último nome após remover o "ME"
             stmt = text(f"""
                 UPDATE players
                 SET {coluna_alvo} = CASE
@@ -408,15 +422,20 @@ def import_tournament(
                     WHEN ({coluna_alvo} + :variacao) < 800 THEN 800
                     ELSE ROUND({coluna_alvo} + :variacao)
                 END
-                WHERE LOWER(nome) LIKE :nome
+                WHERE LOWER(nome) LIKE :primeiro_nome AND LOWER(nome) LIKE :ultimo_nome
             """)
             
-            # Usamos o último sobrenome para garantir o match
-            ultimo_sobrenome = nome_final.split()[-1]
-            resultado = db.execute(stmt, {"variacao": variacao, "nome": f"%{ultimo_sobrenome}%"})
+            resultado = db.execute(stmt, {
+                "variacao": variacao,
+                "primeiro_nome": f"%{partes_busca[0]}%",
+                "ultimo_nome": f"%{partes_busca[-1]}%"
+            })
             
             if resultado.rowcount > 0:
                 jogadores_atualizados += 1
+                print(f"DEBUG: Sucesso! Atualizado: {nome_limpo_busca}")
+            else:
+                print(f"DEBUG: Nenhuma correspondência para: {nome_limpo_busca}")
 
         db.commit()
 
