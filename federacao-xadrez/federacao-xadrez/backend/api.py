@@ -304,88 +304,10 @@ def import_tournament(
 ):
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
-<<<<<<< HEAD
-=======
 
->>>>>>> 990184b (corrige importacao)
         resposta = requests.get(payload.url, headers=headers)
 
         if resposta.status_code != 200:
-<<<<<<< HEAD
-            raise HTTPException(status_code=400, detail="Não foi possível acessar o link.")
-
-        soup = BeautifulSoup(resposta.text, "html.parser")
-        
-        # 1. Busca rigorosa pela tabela de jogadores
-        # Procura a tabela que contém as palavras chave de um torneio de xadrez
-        tabela = None
-        for t in soup.find_all("table"):
-            text_tabela = t.get_text().lower()
-            if "nome" in text_tabela and ("elo" in text_tabela or "rating" in text_tabela):
-                if len(t.find_all("tr")) > 5:
-                    tabela = t
-                    break
-        
-        if not tabela:
-            raise HTTPException(status_code=400, detail="Tabela de resultados não encontrada no formato esperado.")
-
-        linhas = tabela.find_all("tr")
-        
-        # 2. Identifica o ritmo
-        titulo = soup.title.string.lower() if soup.title else ""
-        coluna_alvo = "rating_blz" if "blitz" in titulo else ("rating_rpd" if "rapid" in titulo else "rating_std")
-
-        jogadores_atualizados = 0
-
-        # 3. Processamento com travas de segurança
-       # Dentro do loop for...
-       # 3. Processamento com travas de segurança
-        for linha in linhas[1:]:
-            colunas = linha.find_all("td")
-            if len(colunas) < 11: continue 
-            
-            # 1. Identifica e limpa o Nome
-            nome_raw = colunas[1].text.strip()
-            nome_limpo = "".join([i for i in nome_raw if not i.isdigit()]).replace("NM","").replace("AFM","").replace("WNM","").replace("AIM","").strip()
-            
-            # --- LÓGICA DE INVERSÃO DE NOME (Sobrenome, Nome -> Nome Sobrenome) ---
-            if "," in nome_limpo:
-                partes = nome_limpo.split(",")
-                if len(partes) >= 2:
-                    nome_final = f"{partes[1].strip()} {partes[0].strip()}"
-                else:
-                    nome_final = nome_limpo
-            else:
-                nome_final = nome_limpo
-            # ---------------------------------------------------------------------
-            
-            # 2. Identifica a variação rtg+/-
-            variacao_raw = colunas[10].text.strip()
-            try:
-                variacao = float(variacao_raw.replace(',', '.'))
-            except ValueError:
-                continue 
-            
-            # 3. Busca o jogador no banco (usando o nome já invertido/padronizado)
-            palavras = [p for p in nome_final.lower().split() if len(p) > 2]
-            termo_busca = "%" + "%".join(palavras) + "%"
-
-            stmt = text(f"""
-                UPDATE players 
-                SET {coluna_alvo} = {coluna_alvo} + :variacao 
-                WHERE LOWER(nome) LIKE LOWER(:nome)
-            """)
-            
-            res = db.execute(stmt, {"variacao": variacao, "nome": termo_busca})
-            
-            if res.rowcount > 0:
-                jogadores_atualizados += 1
-            else:
-                # Opcional: print para debug se quiser ver no Log o que ainda falta
-                print(f"DEBUG: Não achou: {nome_final}")
-        db.commit()
-        return {"status": "Sucesso", "message": f"Atualizados {jogadores_atualizados} jogadores."}
-=======
             raise HTTPException(
                 status_code=400,
                 detail="Erro ao acessar o link do Chess-Results."
@@ -533,17 +455,12 @@ def import_tournament(
             "message": f"{jogadores_atualizados} jogadores atualizados.",
             "tipo": coluna_alvo
         }
->>>>>>> 990184b (corrige importacao)
 
     except Exception as e:
 
         db.rollback()
-<<<<<<< HEAD
-        raise HTTPException(status_code=500, detail=f"Erro ao processar torneio: {str(e)}")
-=======
 
         raise HTTPException(
             status_code=500,
             detail=str(e)
         )
->>>>>>> 990184b (corrige importacao)
