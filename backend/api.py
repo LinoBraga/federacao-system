@@ -332,50 +332,36 @@ def import_tournament(
         jogadores_atualizados = 0
 
         # 3. Processamento com travas de segurança
+       # Dentro do loop for...
         for linha in linhas[1:]:
             colunas = linha.find_all("td")
-            if len(colunas) < 3: continue
+            if len(colunas) < 11: continue # A tabela tem 11 colunas conforme a imagem
             
-            rank_text = colunas[0].text.strip()
-            if not rank_text.isdigit(): continue
-            
-            rating_raw = colunas[2].text.strip()
-            rating_limpo = "".join(filter(str.isdigit, rating_raw))
-            if not rating_limpo or len(rating_limpo) > 4: continue
-                
-            novo_rating = int(rating_limpo)
+            # 1. Identifica o Nome (Coluna 1)
             nome_raw = colunas[1].text.strip()
             nome_limpo = "".join([i for i in nome_raw if not i.isdigit()]).replace("NM","").replace("AFM","").replace("WNM","").replace("AIM","").strip()
             
-            partes_nome = nome_limpo.split()
-            termo_busca = f"%{partes_nome[0]}%{partes_nome[-1]}%" if len(partes_nome) >= 2 else f"%{nome_limpo}%"
-
-            # DEBUG: O Render vai gravar isso na aba "Logs"
-            print(f"DEBUG: Tentando atualizar '{nome_limpo}' com termo '{termo_busca}'")
-
-            # ... (código dentro do for, logo após o nome_limpo definido)
-
-            # Transforma o nome vindo do site em uma lista de palavras, ignorando preposições comuns
+            # 2. Identifica a variação rtg+/- (Última coluna - índice 10)
+            variacao_raw = colunas[10].text.strip()
+            try:
+                # Converte para float porque pode ter vírgula ou casas decimais
+                variacao = float(variacao_raw.replace(',', '.'))
+            except ValueError:
+                continue # Pula se não for um número válido
+            
+            # 3. Busca o jogador no banco e aplica a soma
+            # Usamos o nome limpo para localizar
             palavras = [p for p in nome_limpo.lower().split() if len(p) > 2]
-            
-            # Monta um termo de busca que contenha o máximo de partes possíveis do nome
-            # Exemplo: Se o nome é "Daniel Fernandes Viana", busca por "%daniel%fernandes%viana%"
-            if len(palavras) >= 2:
-                termo_busca = "%" + "%".join(palavras) + "%"
-            else:
-                termo_busca = f"%{nome_limpo}%"
+            termo_busca = "%" + "%".join(palavras) + "%"
 
-            # O segredo: usamos o unaccent se o banco permitir, ou apenas o LOWER.
-            # Se o banco for PostgreSQL (Neon), o LOWER já ajuda muito.
-            stmt = text(f"UPDATE players SET {coluna_alvo} = :rating WHERE LOWER(nome) LIKE LOWER(:nome)")
-            res = db.execute(stmt, {"rating": novo_rating, "nome": termo_busca})
+            # O SQL faz a mágica: ele soma o valor ao que já está no banco
+            stmt = text(f"""
+                UPDATE players 
+                SET {coluna_alvo} = {coluna_alvo} + :variacao 
+                WHERE LOWER(nome) LIKE LOWER(:nome)
+            """)
             
-            if res.rowcount > 0:
-                jogadores_atualizados += 1
-            else:
-                # Opcional: print para ver o que falhou no log do Render
-                print(f"DEBUG: Falha ao encontrar: {nome_limpo} (Termo: {termo_busca})")
-            res = db.execute(stmt, {"rating": novo_rating, "nome": termo_busca})
+            res = db.execute(stmt, {"variacao": variacao, "nome": termo_busca})
             
             if res.rowcount > 0:
                 jogadores_atualizados += 1
