@@ -302,7 +302,6 @@ def import_tournament(payload: TournamentImportRequest, db: Session = Depends(ge
         resposta = requests.get(payload.url, headers=headers)
         soup = BeautifulSoup(resposta.text, "html.parser")
         
-        # 1. Busca a tabela correta: aquela que tem muitas linhas e contém a palavra 'Nome'
         tabela = None
         for t in soup.find_all("table"):
             if "nome" in t.get_text().lower() and len(t.find_all("tr")) > 10:
@@ -313,38 +312,41 @@ def import_tournament(payload: TournamentImportRequest, db: Session = Depends(ge
             raise HTTPException(status_code=400, detail="Tabela não encontrada.")
 
         linhas = tabela.find_all("tr")
-        
-        # Ritmo
         titulo = soup.title.string.lower() if soup.title else ""
         coluna_alvo = "rating_blz" if "blitz" in titulo else ("rating_rpd" if "rapid" in titulo else "rating_std")
 
         jogadores_atualizados = 0
+        nomes_tentados = [] # Para a gente ver o que está acontecendo
 
-        # 2. Processamento estrito
         for linha in linhas:
             colunas = linha.find_all("td")
-            # A tabela de jogadores costuma ter pelo menos 5 colunas. Rodapés não.
             if len(colunas) < 5: continue
             
-            # Validação: o Elo deve ter exatamente 4 dígitos (ex: 2237)
-            # Se o texto da coluna 2 não for um número de 4 dígitos, ignora a linha.
             rating_text = colunas[2].text.strip()
             if not (rating_text.isdigit() and 1000 <= int(rating_text) <= 3000):
                 continue
                 
             nome_raw = colunas[1].text.strip()
-            # Limpeza de títulos
+            # Limpeza mais agressiva para facilitar o encontro no banco
             nome_limpo = "".join([i for i in nome_raw if not i.isdigit()]).replace("NM","").replace("AFM","").replace("WNM","").replace("AIM","").strip()
             
-            # Executa o update apenas se o nome for curto e limpo
-            if len(nome_limpo) < 3: continue
-
+            # Tenta buscar ignorando parte do nome se necessário
+            # A lógica aqui é: se o nome tiver 2 palavras, tenta buscar apenas pelo sobrenome ou parte dele
             stmt = text(f"UPDATE players SET {coluna_alvo} = :rating WHERE LOWER(nome) LIKE LOWER(:nome)")
+            # Usamos o nome limpo com wildcards
             res = db.execute(stmt, {"rating": int(rating_text), "nome": f"%{nome_limpo}%"})
-            if res.rowcount > 0: jogadores_atualizados += 1
+            
+            if res.rowcount > 0:
+                jogadores_atualizados += 1
+            else:
+                nomes_tentados.append(nome_limpo)
 
         db.commit()
-        return {"status": "Sucesso", "message": f"Atualizados {jogadores_atualizados} enxadristas!"}
+        return {
+            "status": "Sucesso", 
+            "message": f"Atualizados {jogadores_atualizados} jogadores.",
+            "nao_encontrados": nomes_tentados[:5] # Retorna os 5 primeiros que não achou para diagnosticarmos
+        }
 
     except Exception as e:
         db.rollback()
