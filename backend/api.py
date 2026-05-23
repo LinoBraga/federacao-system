@@ -424,38 +424,48 @@ def import_tournament(
             if len(partes) < 2:
                 continue
 
-            sobrenome = partes[0]
-            primeiro_nome = partes[-1]
+            condicoes = []
+            parametros = {
+                "variacao": variacao
+            }
+
+            for i, parte in enumerate(partes):
+                chave = f"parte{i}"
+
+                condicoes.append(
+                    f"LOWER(nome) LIKE :{chave}"
+                )
+
+                parametros[chave] = f"%{parte}%"
+
+            where_sql = " AND ".join(condicoes)
+
             stmt = text(f"""
-            UPDATE players
-            SET {coluna_alvo} = CASE
+                UPDATE players
+                SET {coluna_alvo} = CASE
 
-                WHEN {coluna_alvo} IS NULL
-                    THEN 1000 + :variacao
+                    WHEN {coluna_alvo} IS NULL
+                        THEN 1000 + :variacao
 
-                WHEN ({coluna_alvo} + :variacao) > 3000
-                    THEN 3000
+                    WHEN ({coluna_alvo} + :variacao) > 3000
+                        THEN 3000
 
-                WHEN ({coluna_alvo} + :variacao) < 800
-                    THEN 800
+                    WHEN ({coluna_alvo} + :variacao) < 800
+                        THEN 800
 
-                ELSE ROUND({coluna_alvo} + :variacao)
+                    ELSE ROUND({coluna_alvo} + :variacao)
 
-            END
+                END
 
-            WHERE LOWER(nome) LIKE :sobrenome
-            AND LOWER(nome) LIKE :primeiro_nome
-        """)
+                WHERE {where_sql}
+            """)
 
             resultado = db.execute(
                 stmt,
-                {
-                "variacao": variacao,
-                "sobrenome": f"%{sobrenome}%",
-                "primeiro_nome": f"%{primeiro_nome}%"
-                }
-    )
-
+                parametros
+            )
+            print(f"Buscando: {nome_limpo}")
+            print(f"Linhas afetadas: {resultado.rowcount}")
             if resultado.rowcount > 0:
                 jogadores_atualizados += 1
                 print(f"Atualizado: {nome_limpo} ({variacao})")
