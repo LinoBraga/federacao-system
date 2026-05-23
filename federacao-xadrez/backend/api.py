@@ -296,44 +296,62 @@ def update_ratings(
 
 # 🚀 ROTA DE IMPORTAÇÃO AUTOMÁTICA VIA LINK DO CHESS-RESULTS
 @app.post("/admin/import-tournament", tags=["Administração (Requer Token)"])
-def import_tournament(payload: TournamentImportRequest, db: Session = Depends(get_db), token: str = Depends(verify_admin_token)):
+def import_tournament(
+    payload: TournamentImportRequest, 
+    db: Session = Depends(get_db),
+    token: str = Depends(verify_admin_token)
+):
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
         resposta = requests.get(payload.url, headers=headers)
+        
+        if resposta.status_code != 200:
+            raise HTTPException(status_code=400, detail="Não foi possível acessar o link.")
+
         soup = BeautifulSoup(resposta.text, "html.parser")
         
-        # Pega a tabela que contém a lista de jogadores (a maior da página)
-        tabela = max(soup.find_all("table"), key=lambda t: len(t.find_all("tr")))
-        linhas = tabela.find_all("tr")
+        # 1. Encontra a tabela procurando pela que tem mais linhas (geralmente a tabela de jogadores)
+        tabela = max(soup.find_all("table"), key=lambda t: len(t.find_all("tr")), default=None)
+        if not tabela:
+            raise HTTPException(status_code=400, detail="Não encontrei a tabela de resultados.")
 
-        # Detecta ritmo
+        linhas = tabela.find_all("tr")
+        
+        # 2. Ritmo de jogo
         titulo = soup.title.string.lower() if soup.title else ""
-        coluna_alvo = "rating_blz" if any(x in titulo for x in ["blitz", "relampago", "relâmpago"]) else ("rating_rpd" if any(x in titulo for x in ["rapid", "rapido", "rápido"]) else "rating_std")
+        coluna_alvo = "rating_blz" if any(x in titulo for x in ["blitz", "relampago"]) else ("rating_rpd" if any(x in titulo for x in ["rapid", "rapido"]) else "rating_std")
 
         jogadores_atualizados = 0
+
+        # 3. Varre as linhas
         for linha in linhas:
             colunas = linha.find_all("td")
-            if len(colunas) < 3: continue
+            if len(colunas) < 3: continue # Pula cabeçalhos e linhas curtas
             
-            # Na estrutura que você colou:
-            # Coluna 1 é o Nome (ex: "Viana Daniel Fernandes")
-            # Coluna 2 é o Elo (ex: "2237")
-            try:
-                # O nome do jogador na sua tabela parece estar colado com a posição (ex: "1NMViana...")
-                # Precisamos limpar isso. O nome começa logo após o título (NM, WNM, AFM, etc)
-                raw_nome = colunas[1].text.strip()
-                # Remove números iniciais e títulos (NM, AFM, WNM, etc)
-                nome_limpo = "".join([i for i in raw_nome if not i.isdigit()]).replace("NM", "").replace("AFM", "").replace("WNM", "").replace("AIM", "").strip()
-                
-                rating_str = colunas[2].text.strip()
-                novo_rating = int("".join(filter(str.isdigit, rating_str)))
+            # Pela estrutura que você enviou: Nome está na coluna 1, Rating na coluna 2
+            raw_nome = colunas[1].text.strip()
+            rating_str = colunas[2].text.strip()
+            
+            # Limpa o nome (remove títulos como NM, AFM, etc)
+            nome_limpo = "".join([i for i in raw_nome if not i.isdigit()]).replace("NM","").replace("AFM","").replace("WNM","").replace("AIM","").strip()
+            
+            # Limpa o rating
+            rating_limpo = "".join(filter(str.isdigit, rating_str))
+            if not rating_limpo: continue
+            
+            novo_rating = int(rating_limpo)
 
-                stmt = text(f"UPDATE players SET {coluna_alvo} = :rating WHERE LOWER(nome) LIKE LOWER(:nome)")
-                res = db.execute(stmt, {"rating": novo_rating, "nome": f"%{nome_limpo}%"})
-                if res.rowcount > 0: jogadores_atualizados += 1
-            except: continue
+            # 4. Update
+            stmt = text(f"UPDATE players SET {coluna_alvo} = :rating WHERE LOWER(nome) LIKE LOWER(:nome)")
+            # Usamos LIKE para aumentar a chance de encontrar o nome mesmo com sobrenomes diferentes
+            resultado = db.execute(stmt, {"rating": novo_rating, "nome": f"%{nome_limpo}%"})
+            
+            if resultado.rowcount > 0:
+                jogadores_atualizados += 1
 
         db.commit()
-        return {"status": "Sucesso", "message": f"Atualizados {jogadores_atualizados} jogadores!"}
+        return {"status": "Sucesso", "message": f"Atualizados {jogadores_atualizados} enxadristas!"}
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Erro: {str(e)}")
