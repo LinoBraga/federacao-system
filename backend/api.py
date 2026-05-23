@@ -173,15 +173,22 @@ def get_ranking(db: Session = Depends(get_db)):
         
         players_list = []
         for row in result:
+            # Captura os valores brutos vindos do banco de dados
+            r_std = row[3]
+            r_rpd = row[4]
+            r_blz = row[5]
+
             players_list.append({
                 "id": row[0],
                 "name": row[1],
                 "clube": row[2] if row[2] else "Sem Clube",
-                # Se o valor for nulo ou igual a 0, assume o padrão de 1800
-                "rating_std": int(row[3]) if (row[3] is not None and row[3] != 0) else 1800,
-                "rating_rpd": int(row[4]) if (row[4] is not None and row[4] != 0) else 1800,
-                # Para o Blitz: se for nulo ou 0, envia None pro React colocar o "—"
-                "rating_blz": int(row[5]) if (row[5] is not None and row[5] != 0) else None 
+                
+                # Padrão FPBX: Se não tiver ou for 0, vira 1800. Se tiver, respeita o banco!
+                "rating_std": int(r_std) if (r_std is not None and int(r_std) > 0) else 1800,
+                "rating_rpd": int(r_rpd) if (r_rpd is not None and int(r_rpd) > 0) else 1800,
+                
+                # Blitz Justo: Se tiver valor real no banco, ele MOSTRA. Se for nulo ou 0, vira None (--)
+                "rating_blz": int(r_blz) if (r_blz is not None and int(r_blz) > 0) else None 
             })
         return players_list
     except Exception as e:
