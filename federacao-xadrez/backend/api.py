@@ -320,32 +320,57 @@ def import_tournament(
         
         # Ritmo
         titulo = soup.title.string.lower() if soup.title else ""
-        coluna_alvo = "rating_blz" if any(x in titulo for x in ["blitz", "relampago"]) else ("rating_rpd" if any(x in titulo for x in ["rapid", "rapido"]) else "rating_std")
 
+# Detecta ritmo de forma mais precisa
+if any(x in titulo for x in ["blitz", "relampago", "blz"]):
+    coluna_alvo = "rating_blz"
+elif any(x in titulo for x in ["rapid", "rapido", "rpd"]):
+    coluna_alvo = "rating_rpd"
+else:
+    coluna_alvo = "rating_std" # Fallback para Standard
+        print(f"DEBUG: Título detectado: '{titulo}' | Coluna escolhida: '{coluna_alvo}'")
         jogadores_atualizados = 0
 
         # Loop (pula o cabeçalho)
         for linha in linhas[1:]:
-            colunas = linha.find_all("td")
-            if len(colunas) < 3: continue
-            
-            # Ajuste de índices: Nome na coluna 1, Rating na coluna 2
-            nome_raw = colunas[1].text.strip()
-            rating_raw = colunas[2].text.strip()
-            
-            # Limpeza
-            rating_limpo = "".join(filter(str.isdigit, rating_raw))
-            if not rating_limpo: continue
-            
-            novo_rating = int(rating_limpo)
-            # Remove títulos para casar com o nome no banco
-            nome_final = nome_raw.replace("NM", "").replace("AFM", "").replace("WNM", "").replace("AIM", "").strip()
+            # ... (dentro do for linha in linhas[1:])
+        colunas = linha.find_all("td")
+        if len(colunas) < 11: continue # Garante que a linha tem a coluna de delta
+        
+        # 1. Identifica o Nome (Coluna 1) e limpa
+        nome_raw = colunas[1].text.strip()
+        nome_limpo = "".join([i for i in nome_raw if not i.isdigit()]).replace("NM","").replace("AFM","").replace("WNM","").replace("AIM","").strip()
+        
+        # Inverte "Silva, Joao" para "Joao Silva"
+        if "," in nome_limpo:
+            partes = nome_limpo.split(",")
+            nome_final = f"{partes[1].strip()} {partes[0].strip()}"
+        else:
+            nome_final = nome_limpo
 
-            stmt = text(f"UPDATE players SET {coluna_alvo} = :rating WHERE LOWER(nome) LIKE LOWER(:nome)")
-            resultado = db.execute(stmt, {"rating": novo_rating, "nome": f"%{nome_final}%"})
-            
-            if resultado.rowcount > 0:
-                jogadores_atualizados += 1
+        # 2. Identifica a variação (Coluna 10 conforme sua imagem)
+        variacao_raw = colunas[10].text.strip()
+        try:
+            variacao = float(variacao_raw.replace(',', '.'))
+        except ValueError:
+            continue
+
+        # 3. Trava de segurança: Busca pelo nome e aplica a soma
+        # Usamos :nome com % em volta para flexibilidade
+        stmt = text(f"""
+            UPDATE players 
+            SET {coluna_alvo} = {coluna_alvo} + :variacao 
+            WHERE LOWER(nome) LIKE LOWER(:nome)
+            AND ({coluna_alvo} + :variacao) BETWEEN 800 AND 3000
+        """)
+        
+        # Usamos uma busca um pouco mais permissiva no LIKE
+        termo_busca = f"%{nome_final.split()[0]}%{nome_final.split()[-1]}%" if len(nome_final.split()) > 1 else f"%{nome_final}%"
+        
+        res = db.execute(stmt, {"variacao": variacao, "nome": termo_busca})
+        
+        if res.rowcount > 0:
+            jogadores_atualizados += 1
 
         db.commit()
         return {"status": "Sucesso", "message": f"Atualizados {jogadores_atualizados} jogadores!"}
