@@ -6,11 +6,24 @@ export default function Ranking() {
   const [mode, setMode] = useState("std");
   const [topOnly, setTopOnly] = useState(false);
 
-  useEffect(() => {
-    fetch(`http://127.0.0.1:8000/ranking/${mode}`)
-      .then(res => res.json())
-      .then(data => setPlayers(data));
-  }, [mode]);
+useEffect(() => {
+    // Configura a URL dinâmica: usa o Render se estiver na Vercel, ou o localhost se estiver no PC
+    const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+
+    // Busca a rota correta do seu backend (/ranking)
+    fetch(`${API_URL}/ranking`)
+      .then(res => {
+        if (!res.ok) throw new Error("Erro na resposta do servidor");
+        return res.json();
+      })
+      .then(data => {
+        // Se a resposta for válida, ele atualiza o estado com os jogadores
+        setPlayers(data);
+      })
+      .catch(err => {
+        console.error("Erro ao buscar ranking:", err);
+      });
+  }, []); // Mantemos o array vazio [] para ele buscar a lista do banco apenas UMA vez ao abrir a página
 
   const filtered = players
     .filter(p =>
