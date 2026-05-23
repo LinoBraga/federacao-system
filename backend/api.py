@@ -296,67 +296,56 @@ def update_ratings(
 
 # 🚀 ROTA DE IMPORTAÇÃO AUTOMÁTICA VIA LINK DO CHESS-RESULTS
 @app.post("/admin/import-tournament", tags=["Administração (Requer Token)"])
-def import_tournament(
-    payload: TournamentImportRequest, 
-    db: Session = Depends(get_db),
-    token: str = Depends(verify_admin_token)
-):
+def import_tournament(payload: TournamentImportRequest, db: Session = Depends(get_db), token: str = Depends(verify_admin_token)):
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
         resposta = requests.get(payload.url, headers=headers)
-        
-        if resposta.status_code != 200:
-            raise HTTPException(status_code=400, detail="Não foi possível acessar o link.")
-
         soup = BeautifulSoup(resposta.text, "html.parser")
         
-        # BUSCA REFINADA: Procura uma tabela que tenha a palavra "Nome" no cabeçalho
-        # e que tenha colunas suficientes para ser a tabela de jogadores
+        # 1. Busca a tabela correta: aquela que tem muitas linhas e contém a palavra 'Nome'
         tabela = None
         for t in soup.find_all("table"):
-            header = t.get_text().lower()
-            if "nome" in header and "pts" in header and len(t.find_all("tr")) > 10:
+            if "nome" in t.get_text().lower() and len(t.find_all("tr")) > 10:
                 tabela = t
                 break
         
         if not tabela:
-            raise HTTPException(status_code=400, detail="Não encontrei a tabela de classificação (procurei por 'Nome' e 'Pts').")
+            raise HTTPException(status_code=400, detail="Tabela não encontrada.")
 
         linhas = tabela.find_all("tr")
         
         # Ritmo
         titulo = soup.title.string.lower() if soup.title else ""
-        coluna_alvo = "rating_blz" if any(x in titulo for x in ["blitz", "relampago"]) else ("rating_rpd" if any(x in titulo for x in ["rapid", "rapido"]) else "rating_std")
+        coluna_alvo = "rating_blz" if "blitz" in titulo else ("rating_rpd" if "rapid" in titulo else "rating_std")
 
         jogadores_atualizados = 0
 
-        # Loop (pula o cabeçalho)
-        for linha in linhas[1:]:
+        # 2. Processamento estrito
+        for linha in linhas:
             colunas = linha.find_all("td")
-            # Ajuste de tamanho mínimo para garantir que temos dados
-            if len(colunas) < 3: continue
+            # A tabela de jogadores costuma ter pelo menos 5 colunas. Rodapés não.
+            if len(colunas) < 5: continue
             
-            # Pela estrutura que você enviou: Nome está na coluna 1, Rating na coluna 2
-            raw_nome = colunas[1].text.strip()
-            rating_raw = colunas[2].text.strip()
+            # Validação: o Elo deve ter exatamente 4 dígitos (ex: 2237)
+            # Se o texto da coluna 2 não for um número de 4 dígitos, ignora a linha.
+            rating_text = colunas[2].text.strip()
+            if not (rating_text.isdigit() and 1000 <= int(rating_text) <= 3000):
+                continue
+                
+            nome_raw = colunas[1].text.strip()
+            # Limpeza de títulos
+            nome_limpo = "".join([i for i in nome_raw if not i.isdigit()]).replace("NM","").replace("AFM","").replace("WNM","").replace("AIM","").strip()
             
-            rating_limpo = "".join(filter(str.isdigit, rating_raw))
-            if not rating_limpo: continue
-            
-            novo_rating = int(rating_limpo)
-            
-            # Remove títulos (NM, AFM, etc) para comparar com o banco
-            nome_final = raw_nome.replace("NM", "").replace("AFM", "").replace("WNM", "").replace("AIM", "").strip()
+            # Executa o update apenas se o nome for curto e limpo
+            if len(nome_limpo) < 3: continue
 
             stmt = text(f"UPDATE players SET {coluna_alvo} = :rating WHERE LOWER(nome) LIKE LOWER(:nome)")
-            resultado = db.execute(stmt, {"rating": novo_rating, "nome": f"%{nome_final}%"})
-            
-            if resultado.rowcount > 0:
-                jogadores_atualizados += 1
+            res = db.execute(stmt, {"rating": int(rating_text), "nome": f"%{nome_limpo}%"})
+            if res.rowcount > 0: jogadores_atualizados += 1
 
         db.commit()
         return {"status": "Sucesso", "message": f"Atualizados {jogadores_atualizados} enxadristas!"}
 
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Erro: {str(e)}")
