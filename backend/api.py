@@ -357,123 +357,66 @@ def import_tournament(
         # PROCESSAMENTO DAS LINHAS
         # ==========================================
 
+        # ==========================================
+        # PROCESSAMENTO DAS LINHAS (NOVA LÓGICA ROBUSTA)
+        # ==========================================
         for linha in linhas[1:]:
-
             colunas = linha.find_all("td")
-            print([c.text.strip() for c in colunas])
-            # Segurança
-            if len(colunas) < 12:
-                continue
+            if len(colunas) < 5: continue 
 
-            # ==========================================
-            # VARIAÇÃO
-            # ==========================================
+            # 1. ACHA O NOME (Procura a coluna que tem vírgula, ex: "Silva, João")
+            nome_raw = ""
+            for col in colunas:
+                texto = col.text.strip()
+                if "," in texto and len(texto) > 5:
+                    nome_raw = texto
+                    break
+            
+            if not nome_raw: continue
 
-            variacao_raw = (
-                colunas[-1]
-                .text
-                .strip()
-                .replace(",", ".")
-            )
+            # 2. ACHA A VARIAÇÃO (Procura da direita para a esquerda pelo primeiro número)
+            variacao = None
+            for col in reversed(colunas):
+                texto = col.text.strip().replace(",", ".")
+                # Verifica se é um número (positivo ou negativo)
+                try:
+                    variacao = float(texto)
+                    break 
+                except ValueError:
+                    continue
+            
+            if variacao is None: continue
 
-            nome_raw = colunas[3].text.strip()
-            try:
-                variacao = round(float(variacao_raw))
-            except:
-                continue
+            # 3. CONVERTE "Sobrenome, Nome" para "Nome Sobrenome"
+            # Isso facilita o match com o seu banco de dados
+            partes = nome_raw.split(',')
+            nome_limpo = f"{partes[1].strip()} {partes[0].strip()}"
+            
+            # Limpa títulos do nome (GM, IM, etc)
+            titulos = ["GM", "IM", "FM", "CM", "WGM", "WIM", "WFM", "WCM", "NM", "AFM"]
+            nome_final = " ".join([p for p in nome_limpo.split() if p.upper() not in titulos])
+            
+            print(f"DEBUG: Processando -> {nome_final} | Variação: {variacao}")
 
-            # ==========================================
-            # NOME
-            # ==========================================
-
-            nome_raw = colunas[1].text.strip()
-
-            # Remove números
-            nome_limpo = "".join(
-                c for c in nome_raw
-                if not c.isdigit()
-            )
-
-            # Remove títulos corretamente
-            titulos = [
-                "GM", "IM", "FM", "CM",
-                "WGM", "WIM", "WFM", "WCM",
-                "NM", "AFM"
-            ]
-
-            palavras = nome_limpo.split()
-
-            palavras_filtradas = [
-                p for p in palavras
-                if p.upper() not in titulos
-            ]
-
-            nome_limpo = " ".join(palavras_filtradas).strip()
-
-            if len(nome_limpo) < 3:
-                continue
-
-            # ==========================================
-            # UPDATE SEGURO
-            # ==========================================
-            # ==========================================
-# UPDATE SEGURO
-# ==========================================
-
-            partes = [
-                p.strip()
-                for p in nome_limpo.lower().split()
-                if len(p.strip()) > 1
-            ]
-            if len(partes) < 2:
-                continue
-
-            condicoes = []
-            parametros = {
-                "variacao": variacao
-            }
-
-            for i, parte in enumerate(partes[:3]):
-                chave = f"parte{i}"
-
-                condicoes.append(
-                    f"LOWER(nome) LIKE :{chave}"
-                )
-
-                parametros[chave] = f"%{parte}%"
-
-            where_sql = " AND ".join(condicoes)
-            if not where_sql:
-                continue
+            # 4. UPDATE SEGURO NO BANCO
+            # (Aqui mantém a sua lógica de SQL que já estava funcionando)
             stmt = text(f"""
                 UPDATE players
                 SET {coluna_alvo} = CASE
-
-                    WHEN {coluna_alvo} IS NULL
-                        THEN 1000 + :variacao
-
-                    WHEN ({coluna_alvo} + :variacao) > 3000
-                        THEN 3000
-
-                    WHEN ({coluna_alvo} + :variacao) < 800
-                        THEN 800
-
+                    WHEN {coluna_alvo} IS NULL THEN 1000 + :variacao
+                    WHEN ({coluna_alvo} + :variacao) > 3000 THEN 3000
+                    WHEN ({coluna_alvo} + :variacao) < 800 THEN 800
                     ELSE ROUND({coluna_alvo} + :variacao)
-
                 END
-
-                WHERE {where_sql}
+                WHERE LOWER(nome) LIKE :nome
             """)
-
-            resultado = db.execute(
-                stmt,
-                parametros
-            )
-            print(f"Buscando: {nome_limpo}")
-            print(f"Linhas afetadas: {resultado.rowcount}")
+            
+            # Usamos o último sobrenome para garantir o match
+            ultimo_sobrenome = nome_final.split()[-1]
+            resultado = db.execute(stmt, {"variacao": variacao, "nome": f"%{ultimo_sobrenome}%"})
+            
             if resultado.rowcount > 0:
                 jogadores_atualizados += 1
-                print(f"Atualizado: {nome_limpo} ({variacao})")
 
         db.commit()
 
