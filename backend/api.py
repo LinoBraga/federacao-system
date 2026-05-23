@@ -370,12 +370,13 @@ def import_tournament(
             # ==========================================
 
             variacao_raw = (
-                colunas[10]
+                colunas[-1]
                 .text
                 .strip()
                 .replace(",", ".")
             )
 
+            nome_raw = colunas[3].text.strip()
             try:
                 variacao = round(float(variacao_raw))
             except:
