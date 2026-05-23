@@ -73,6 +73,7 @@ class RatingUpdate(BaseModel):
 # Modelo criado para receber a URL do Chess-Results com segurança
 class TournamentImportRequest(BaseModel):
     url: str
+    tipo: str
 
 
 # ==========================================
