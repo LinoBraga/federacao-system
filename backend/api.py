@@ -1,5 +1,6 @@
 import os
 import csv
+import requests
 from io import StringIO
 from typing import List
 from pydantic import BaseModel
@@ -7,8 +8,9 @@ from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 from fastapi.responses import StreamingResponse
+from bs4 import BeautifulSoup
 
-# Aqui estão todas as ferramentas necessárias para o banco rodar sem erros:
+# Ferramentas do banco:
 from sqlalchemy import create_engine, Column, Integer, String, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
@@ -16,17 +18,13 @@ from sqlalchemy.orm import sessionmaker, Session
 # ==========================================
 # 1. CONFIGURAÇÃO DO BANCO DE DADOS
 # ==========================================
-# Se estiver no Render, usa a variável DATABASE_URL (Postgres). No PC, usa SQLite local.
 SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL")
 
 if SQLALCHEMY_DATABASE_URL:
-    # Ajuste necessário pois o SQLAlchemy moderno exige "postgresql://" em vez de "postgres://"
     if SQLALCHEMY_DATABASE_URL.startswith("postgres://"):
         SQLALCHEMY_DATABASE_URL = SQLALCHEMY_DATABASE_URL.replace("postgres://", "postgresql://", 1)
-    
     engine = create_engine(SQLALCHEMY_DATABASE_URL)
 else:
-    # Banco de dados local para testes no seu computador
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     SQLALCHEMY_DATABASE_URL = f"sqlite:///{os.path.join(BASE_DIR, 'federacao.db')}"
     engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
@@ -48,7 +46,6 @@ class PlayerModel(Base):
     rating_rpd = Column(Integer, default=1000)
     rating_blz = Column(Integer, default=1000)
 
-# Cria as tabelas automaticamente no banco se elas não existirem
 Base.metadata.create_all(bind=engine)
 
 
@@ -73,6 +70,10 @@ class RatingUpdate(BaseModel):
     rating_rpd: int = None
     rating_blz: int = None
 
+# Modelo criado para receber a URL do Chess-Results com segurança
+class TournamentImportRequest(BaseModel):
+    url: str
+
 
 # ==========================================
 # 3. CONFIGURAÇÃO DA API (FastAPI)
@@ -83,8 +84,6 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Configuração do CORS para permitir que a Vercel acesse o Render sem bloqueios
-# Configuração do CORS flexível para desenvolvimento e produção na Vercel
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -104,14 +103,10 @@ def get_db():
     finally:
         db.close()
 
-# Ativa o cabeçalho personalizado "X-Admin-Token" no cadeado do Swagger (/docs)
 header_scheme = APIKeyHeader(name="X-Admin-Token", auto_error=False)
-
-# Puxa a senha do Render (Environment Variables). Se não achar, usa a padrão para testes locais.
 ADMIN_TOKEN = os.getenv("TOKEN_FPBX", "senha_local_teste")
 
 def verify_admin_token(token_enviado: str = Depends(header_scheme)):
-    """Valida se a senha enviada no cabeçalho está correta"""
     if not token_enviado or token_enviado != ADMIN_TOKEN:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -124,8 +119,6 @@ def verify_admin_token(token_enviado: str = Depends(header_scheme)):
 # 5. ROTAS DA API
 # ==========================================
 
-# --- ROTAS PÚBLICAS ---
-# --- ROTA DE EXPORTAR LISTA (Gera um arquivo CSV com os dados do Neon) ---
 @app.get("/api/players/export")
 def export_players(db: Session = Depends(get_db)):
     try:
@@ -157,12 +150,8 @@ def export_players(db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro interno no servidor: {str(e)}")
 
-# --- ROTA DE IMPORTAR FPBX (Um gatilho para atualizar a base se precisar) ---
 @app.post("/api/players/import-fpbx")
 def import_fpbx_status():
-    # Como nós já fizemos a importação pesada via script externo,
-    # essa rota serve para o Frontend saber que o banco já está atualizado 
-    # ou para você disparar um aviso de sucesso na tela.
     return {
         "status": "sucesso", 
         "message": "Base de dados sincronizada com o Neon! 1048 enxadristas prontos."
@@ -175,15 +164,8 @@ def home():
 @app.get("/ranking", tags=["Consulta Pública"])
 def get_ranking(db: Session = Depends(get_db)):
     try:
-        # Tenta buscar por rating_blz, se der erro de coluna, tente mudar o SQL abaixo para rating_blitz
         query = text("""
-            SELECT 
-                id, 
-                nome, 
-                clube, 
-                COALESCE(rating_std, 0), 
-                COALESCE(rating_rpd, 0), 
-                COALESCE(rating_blz, 0) 
+            SELECT id, nome, clube, rating_std, rating_rpd, rating_blz 
             FROM players 
             ORDER BY rating_std DESC
         """)
@@ -195,14 +177,16 @@ def get_ranking(db: Session = Depends(get_db)):
                 "id": row[0],
                 "name": row[1],
                 "clube": row[2] if row[2] else "Sem Clube",
-                "rating_std": int(row[3]),
-                "rating_rpd": int(row[4]),
-                "rating_blz": int(row[5])  # Força o valor tratado a ir como número inteiro para o React
+                # Se o valor for nulo ou igual a 0, assume o padrão de 1800
+                "rating_std": int(row[3]) if (row[3] is not None and row[3] != 0) else 1800,
+                "rating_rpd": int(row[4]) if (row[4] is not None and row[4] != 0) else 1800,
+                # Para o Blitz: se for nulo ou 0, envia None pro React colocar o "—"
+                "rating_blz": int(row[5]) if (row[5] is not None and row[5] != 0) else None 
             })
         return players_list
     except Exception as e:
-        # Se o banco reclamar que 'rating_blz' não existe, o erro vai aparecer claramente no log do Render
         raise HTTPException(status_code=500, detail=f"Erro ao buscar ranking: {str(e)}")
+
 @app.get("/player/{player_id}", response_model=PlayerResponse, tags=["Consulta Pública"])
 def get_player(player_id: int, db: Session = Depends(get_db)):
     player = db.query(PlayerModel).filter(PlayerModel.id == player_id).first()
@@ -236,7 +220,6 @@ def update_ratings(
     if not db_player:
         raise HTTPException(status_code=404, detail="Enxadrista não encontrado.")
     
-    # Atualiza apenas os campos enviados no JSON (evita apagar as outras modalidades)
     update_data = ratings.dict(exclude_unset=True)
     for key, value in update_data.items():
         setattr(db_player, key, value)
@@ -245,12 +228,80 @@ def update_ratings(
     db.refresh(db_player)
     return db_player
 
+
+# 🚀 ROTA DE IMPORTAÇÃO AUTOMÁTICA VIA LINK DO CHESS-RESULTS
 @app.post("/admin/import-tournament", tags=["Administração (Requer Token)"])
 def import_tournament(
-    tournament_name: str, 
+    payload: TournamentImportRequest, 
+    db: Session = Depends(get_db),
     token: str = Depends(verify_admin_token)
 ):
-    return {
-        "status": "Sucesso", 
-        "message": f"Torneio '{tournament_name}' processado e ratings atualizados!"
-    }
+    """
+    Acessa o link do Chess-Results enviado, lê a tabela de classificação,
+    identifica o ritmo do torneio e atualiza os ratings correspondentes no Neon.
+    """
+    try:
+        # 1. Baixa a página do torneio simulando um navegador real
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        resposta = requests.get(payload.url, headers=headers)
+        
+        if resposta.status_code != 200:
+            raise HTTPException(status_code=400, detail="Não foi possível acessar o link do Chess-Results.")
+
+        soup = BeautifulSoup(resposta.text, "html.parser")
+        
+        # 2. Procura pela tabela clássica de classificação do Chess-Results
+        tabela = soup.find("table", {"class": "CRtable"})
+        if not tabela:
+            raise HTTPException(status_code=400, detail="A tabela do torneio ('CRtable') não foi encontrada no link fornecido.")
+
+        linhas = tabela.find_all("tr")
+        
+        # 3. Descobre o ritmo de jogo pelo título do torneio para saber qual coluna alterar
+        titulo = soup.title.string.lower() if soup.title else ""
+        coluna_alvo = "rating_std"  # Padrão: Absoluto/Standard
+        
+        if "blitz" in titulo or "relampago" in titulo or "relâmpago" in titulo:
+            coluna_alvo = "rating_blz"
+        elif "rapid" in titulo or "rapido" in titulo or "rápido" in titulo:
+            coluna_alvo = "rating_rpd"
+
+        jogadores_atualizados = 0
+
+        # 4. Varre os dados coletados (pula a linha 0 que é o cabeçalho)
+        for linha in linhas[1:]:
+            colunas = linha.find_all("td")
+            if len(colunas) < 5:
+                continue
+            
+            # Estrutura do Chess-Results: Nome do enxadrista fica no bloco de texto limpo
+            nome_jogador = colunas[3].text.strip()
+            
+            # Filtra apenas os números do campo de rating (ignora letras ou flags de países)
+            rating_limpo = "".join(filter(str.isdigit, colunas[4].text.strip()))
+            if not rating_limpo:
+                continue
+                
+            novo_rating = int(rating_limpo)
+
+            # 5. Executa a query de atualização direta no Neon cruzando pelo nome
+            stmt = text(f"""
+                UPDATE players 
+                SET {coluna_alvo} = :rating 
+                WHERE LOWER(nome) = LOWER(:nome)
+            """)
+            resultado = db.execute(stmt, {"rating": novo_rating, "nome": nome_jogador})
+            
+            if resultado.rowcount > 0:
+                jogadores_atualizados += 1
+
+        db.commit()
+        
+        return {
+            "status": "Sucesso",
+            "message": f"O ritmo detectado foi '{coluna_alvo.split('_')[1].upper()}'. Atualizados {jogadores_atualizados} enxadristas!"
+        }
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Erro interno ao processar torneio: {str(e)}")
