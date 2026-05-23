@@ -419,12 +419,14 @@ def import_tournament(
 # UPDATE SEGURO
 # ==========================================
 
-        partes = nome_limpo.lower().split()
+            partes = nome_limpo.lower().split()
 
-        sobrenome = partes[0]
-        primeiro_nome = partes[1] if len(partes) > 1 else ""
+            if len(partes) < 2:
+                continue
 
-        stmt = text(f"""
+            sobrenome = partes[0]
+            primeiro_nome = partes[-1]
+            stmt = text(f"""
             UPDATE players
             SET {coluna_alvo} = CASE
 
@@ -445,18 +447,18 @@ def import_tournament(
             AND LOWER(nome) LIKE :primeiro_nome
         """)
 
-        resultado = db.execute(
-        stmt,
-        {
-            "variacao": variacao,
-            "sobrenome": f"%{sobrenome}%",
-            "primeiro_nome": f"%{primeiro_nome}%"
-        }
+            resultado = db.execute(
+                stmt,
+                {
+                "variacao": variacao,
+                "sobrenome": f"%{sobrenome}%",
+                "primeiro_nome": f"%{primeiro_nome}%"
+                }
     )
 
-        if resultado.rowcount > 0:
-            jogadores_atualizados += 1
-            print(f"Atualizado: {nome_limpo} ({variacao})")
+            if resultado.rowcount > 0:
+                jogadores_atualizados += 1
+                print(f"Atualizado: {nome_limpo} ({variacao})")
 
         db.commit()
 
