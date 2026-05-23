@@ -1,29 +1,38 @@
 import os
 from typing import List
+from pydantic import BaseModel
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import APIKeyHeader  # <-- IMPORTANTE: Mudamos aqui para ativar o cadeado
-from pydantic import BaseModel
+from fastapi.security import APIKeyHeader
 from sqlalchemy import create_engine, Column, Integer, String
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 
 # ==========================================
-# 1. CONFIGURAÇÃO DO BANCO DE DADOS (SQLite)
+# 1. CONFIGURAÇÃO DO BANCO DE DADOS
 # ==========================================
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Se estiver no Render, usa a variável DATABASE_URL (Postgres). No PC, usa SQLite local.
+SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL")
 
-if os.path.exists("/data"):
-    SQLALCHEMY_DATABASE_URL = "sqlite:////data/federacao.db"
+if SQLALCHEMY_DATABASE_URL:
+    # Ajuste necessário pois o SQLAlchemy moderno exige "postgresql://" em vez de "postgres://"
+    if SQLALCHEMY_DATABASE_URL.startswith("postgres://"):
+        SQLALCHEMY_DATABASE_URL = SQLALCHEMY_DATABASE_URL.replace("postgres://", "postgresql://", 1)
+    
+    engine = create_engine(SQLALCHEMY_DATABASE_URL)
 else:
+    # Banco de dados local para testes no seu computador
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     SQLALCHEMY_DATABASE_URL = f"sqlite:///{os.path.join(BASE_DIR, 'federacao.db')}"
+    engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
 
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
-)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
+
+# ==========================================
+# MODELO DO BANCO DE DADOS (SQLAlchemy)
+# ==========================================
 class PlayerModel(Base):
     __tablename__ = "players"
 
@@ -34,6 +43,7 @@ class PlayerModel(Base):
     rating_rpd = Column(Integer, default=1000)
     rating_blz = Column(Integer, default=1000)
 
+# Cria as tabelas automaticamente no banco se elas não existirem
 Base.metadata.create_all(bind=engine)
 
 
@@ -68,6 +78,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Configuração do CORS para permitir que a Vercel acesse o Render sem bloqueios
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -78,9 +89,8 @@ app.add_middleware(
 
 
 # ==========================================
-# 4. DEPENDÊNCIAS E TRAVAS DE SEGURANÇA (Cadeado Ativado)
+# 4. DEPENDÊNCIAS E TRAVAS DE SEGURANÇA
 # ==========================================
-
 def get_db():
     db = SessionLocal()
     try:
@@ -88,13 +98,14 @@ def get_db():
     finally:
         db.close()
 
-# Isso avisa o FastAPI para criar o botão de "Authorize" (cadeado) na interface de testes
+# Ativa o cabeçalho personalizado "X-Admin-Token" no cadeado do Swagger (/docs)
 header_scheme = APIKeyHeader(name="X-Admin-Token", auto_error=False)
 
+# Puxa a senha do Render (Environment Variables). Se não achar, usa a padrão para testes locais.
 ADMIN_TOKEN = os.getenv("TOKEN_FPBX", "senha_local_teste")
 
 def verify_admin_token(token_enviado: str = Depends(header_scheme)):
-    """Valida se a senha digitada no cadeado está correta"""
+    """Valida se a senha enviada no cabeçalho está correta"""
     if not token_enviado or token_enviado != ADMIN_TOKEN:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -115,6 +126,7 @@ def home():
 
 @app.get("/ranking", response_model=List[PlayerResponse], tags=["Consulta Pública"])
 def get_ranking(db: Session = Depends(get_db)):
+    # Retorna a lista de jogadores ordenada pelo maior Rating Absoluto (Standard)
     return db.query(PlayerModel).order_by(PlayerModel.rating_std.desc()).all()
 
 @app.get("/player/{player_id}", response_model=PlayerResponse, tags=["Consulta Pública"])
@@ -125,7 +137,7 @@ def get_player(player_id: int, db: Session = Depends(get_db)):
     return player
 
 
-# --- ROTAS PROTEGIDAS (Agora vinculadas ao cadeado do Swagger) ---
+# --- ROTAS PROTEGIDAS (Exigem o Token de Admin) ---
 
 @app.post("/admin/players", response_model=PlayerResponse, status_code=status.HTTP_201_CREATED, tags=["Administração (Requer Token)"])
 def create_player(
@@ -150,6 +162,7 @@ def update_ratings(
     if not db_player:
         raise HTTPException(status_code=404, detail="Enxadrista não encontrado.")
     
+    # Atualiza apenas os campos enviados no JSON (evita apagar as outras modalidades)
     update_data = ratings.dict(exclude_unset=True)
     for key, value in update_data.items():
         setattr(db_player, key, value)
