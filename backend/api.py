@@ -360,7 +360,7 @@ def import_tournament(
         for linha in linhas[1:]:
 
             colunas = linha.find_all("td")
-
+            print([c.text.strip() for c in colunas])
             # Segurança
             if len(colunas) < 11:
                 continue
