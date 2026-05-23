@@ -67,8 +67,8 @@ class PlayerResponse(PlayerBase):
 
 class RatingUpdate(BaseModel):
     rating_std: int = None
-    rating_rpd: int = None
-    rating_blz: int = None
+    rating_rapid: int = None
+    rating_blitz: int = None
 
 # Modelo criado para receber a URL do Chess-Results com segurança
 class TournamentImportRequest(BaseModel):
