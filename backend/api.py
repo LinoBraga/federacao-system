@@ -81,7 +81,9 @@ app = FastAPI(
 # Configuração do CORS para permitir que a Vercel acesse o Render sem bloqueios
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://federacaoparaibanadexadrez-c437h7e1v-linobragas-projects.vercel.app",
+        "http://localhost:5173",  # Permite que você continue testando no seu PC localmente
+        "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
