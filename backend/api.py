@@ -130,37 +130,35 @@ def verify_admin_token(token_enviado: str = Depends(header_scheme)):
 @app.get("/api/players/export")
 def export_players(db: Session = Depends(get_db)):
     try:
-        # Busca os jogadores direto do banco de dados
-        # Usando SQL bruto para garantir que funcione independente do seu modelo ORM
-        result = db.execute(text("SELECT * FROM players")).fetchall()
+        # COALESCE garante que se o clube estiver nulo no banco, ele vire "Sem Clube" no CSV sem quebrar o código
+        query = text("""
+            SELECT id, name, COALESCE(clube, 'Sem Clube'), rating_std, rating_rpd, rating_blz 
+            FROM players
+        """)
+        result = db.execute(query).fetchall()
         
         if not result:
             raise HTTPException(status_code=404, detail="Nenhum jogador encontrado para exportar.")
 
-        # Cria um arquivo CSV em memória
         output = StringIO()
         writer = csv.writer(output)
         
-        # Pega o nome das colunas dinamicamente do banco de dados
-        # Se você souber os nomes exatos (ex: ['id', 'name', 'city']), pode colocar direto aqui
-        colunas = ["ID", "Nome", "Cidade", "Rating STD", "Rating RPD", "Rating Blitz", "Última Movimentação"]
+        colunas = ["ID", "Nome", "Clube", "Rating STD", "Rating RPD", "Rating Blitz"]
         writer.writerow(colunas)
         
-        # Escreve as linhas de jogadores
         for row in result:
             writer.writerow(row)
             
         output.seek(0)
         
-        # Retorna o arquivo para o navegador baixar automaticamente
         return StreamingResponse(
             output, 
             media_type="text/csv", 
             headers={"Content-Disposition": "attachment; filename=fbp_players_exported.csv"}
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao exportar: {str(e)}")
-
+        # Esta linha devolve o erro real do sistema para sabermos exatamente o que quebrou
+        raise HTTPException(status_code=500, detail=f"Erro interno no servidor: {str(e)}")
 
 # --- ROTA DE IMPORTAR FPBX (Um gatilho para atualizar a base se precisar) ---
 @app.post("/api/players/import-fpbx")
