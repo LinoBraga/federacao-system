@@ -349,7 +349,10 @@ def import_tournament(
             # Extração e limpeza do nome
             nome_raw = colunas[1].text.strip()
             nome_limpo = "".join([i for i in nome_raw if not i.isdigit()]).replace("NM","").replace("AFM","").replace("WNM","").replace("AIM","").strip()
-            
+            print(f"DEBUG: Buscando no banco por: '{nome_limpo}'")
+
+            stmt = text(f"UPDATE players SET {coluna_alvo} = :rating WHERE LOWER(nome) LIKE LOWER(:nome)")
+    
             if len(nome_limpo) < 3: continue
 
             # 4. Update
