@@ -296,98 +296,44 @@ def update_ratings(
 
 # 🚀 ROTA DE IMPORTAÇÃO AUTOMÁTICA VIA LINK DO CHESS-RESULTS
 @app.post("/admin/import-tournament", tags=["Administração (Requer Token)"])
-def import_tournament(
-    payload: TournamentImportRequest, 
-    db: Session = Depends(get_db),
-    token: str = Depends(verify_admin_token)
-):
-    """
-    Acessa o link do Chess-Results enviado, lê a tabela de classificação,
-    identifica o ritmo do torneio e atualiza os ratings correspondentes no Neon.
-    """
+def import_tournament(payload: TournamentImportRequest, db: Session = Depends(get_db), token: str = Depends(verify_admin_token)):
     try:
-        # 1. Baixa a página do torneio simulando um navegador real
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        headers = {"User-Agent": "Mozilla/5.0"}
         resposta = requests.get(payload.url, headers=headers)
-        
-        if resposta.status_code != 200:
-            raise HTTPException(status_code=400, detail="Não foi possível acessar o link do Chess-Results.")
-
         soup = BeautifulSoup(resposta.text, "html.parser")
         
-        # 2. Procura pela tabela de resultados. 
-        # Algumas páginas não usam "CRtable", mas usam tabelas simples.
-        # Vamos pegar todas as tabelas e encontrar a que tem mais linhas de dados.
-        tabelas = soup.find_all("table")
-        tabela = None
-        
-        for t in tabelas:
-            # Filtramos tabelas que tenham pelo menos 5 linhas (para descartar tabelas de menu/header)
-            if len(t.find_all("tr")) > 5:
-                tabela = t
-                break
-        
-        if not tabela:
-            raise HTTPException(status_code=400, detail="Não foi possível encontrar a tabela de resultados no link.")
-
+        # Pega a tabela que contém a lista de jogadores (a maior da página)
+        tabela = max(soup.find_all("table"), key=lambda t: len(t.find_all("tr")))
         linhas = tabela.find_all("tr")
-        
-        # 3. Descobre o ritmo de jogo pelo título do torneio para saber qual coluna alterar
+
+        # Detecta ritmo
         titulo = soup.title.string.lower() if soup.title else ""
-        coluna_alvo = "rating_std"  # Padrão: Absoluto/Standard
-        
-        if "blitz" in titulo or "relampago" in titulo or "relâmpago" in titulo:
-            coluna_alvo = "rating_blz"
-        elif "rapid" in titulo or "rapido" in titulo or "rápido" in titulo:
-            coluna_alvo = "rating_rpd"
+        coluna_alvo = "rating_blz" if any(x in titulo for x in ["blitz", "relampago", "relâmpago"]) else ("rating_rpd" if any(x in titulo for x in ["rapid", "rapido", "rápido"]) else "rating_std")
 
         jogadores_atualizados = 0
-
-        # 4. Varre os dados coletados (pula a linha 0 que é o cabeçalho)
-       # 4. Varre os dados coletados (pula a linha 0 que é o cabeçalho)
-        for linha in linhas[1:]:
+        for linha in linhas:
             colunas = linha.find_all("td")
+            if len(colunas) < 3: continue
             
-            # O Chess-Results tem linhas de espaçamento que não são jogadores, 
-            # verificar o tamanho das colunas é vital
-            if len(colunas) < 6: 
-                continue
-            
+            # Na estrutura que você colou:
+            # Coluna 1 é o Nome (ex: "Viana Daniel Fernandes")
+            # Coluna 2 é o Elo (ex: "2237")
             try:
-                # O nome geralmente está na coluna 3 ou 4 dependendo do formato
-                nome_jogador = colunas[3].text.strip()
+                # O nome do jogador na sua tabela parece estar colado com a posição (ex: "1NMViana...")
+                # Precisamos limpar isso. O nome começa logo após o título (NM, WNM, AFM, etc)
+                raw_nome = colunas[1].text.strip()
+                # Remove números iniciais e títulos (NM, AFM, WNM, etc)
+                nome_limpo = "".join([i for i in raw_nome if not i.isdigit()]).replace("NM", "").replace("AFM", "").replace("WNM", "").replace("AIM", "").strip()
                 
-                # Tenta pegar o rating (geralmente na coluna 5 ou 6)
-                # Vamos tentar encontrar um número em várias colunas se necessário
-                texto_rating = colunas[5].text.strip() 
-                rating_limpo = "".join(filter(str.isdigit, texto_rating))
-                
-                if not rating_limpo:
-                    continue
-                    
-                novo_rating = int(rating_limpo)
+                rating_str = colunas[2].text.strip()
+                novo_rating = int("".join(filter(str.isdigit, rating_str)))
 
-                # 5. Executa a query de atualização
-                stmt = text(f"""
-                    UPDATE players 
-                    SET {coluna_alvo} = :rating 
-                    WHERE LOWER(nome) = LOWER(:nome)
-                """)
-                resultado = db.execute(stmt, {"rating": novo_rating, "nome": nome_jogador})
-                
-                if resultado.rowcount > 0:
-                    jogadores_atualizados += 1
-            except:
-                # Se uma linha der erro, apenas pula para o próximo jogador
-                continue
+                stmt = text(f"UPDATE players SET {coluna_alvo} = :rating WHERE LOWER(nome) LIKE LOWER(:nome)")
+                res = db.execute(stmt, {"rating": novo_rating, "nome": f"%{nome_limpo}%"})
+                if res.rowcount > 0: jogadores_atualizados += 1
+            except: continue
 
         db.commit()
-        
-        return {
-            "status": "Sucesso",
-            "message": f"O ritmo detectado foi '{coluna_alvo.split('_')[1].upper()}'. Atualizados {jogadores_atualizados} enxadristas!"
-        }
-
+        return {"status": "Sucesso", "message": f"Atualizados {jogadores_atualizados} jogadores!"}
     except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Erro interno ao processar torneio: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))")
