@@ -415,38 +415,48 @@ def import_tournament(
             # ==========================================
             # UPDATE SEGURO
             # ==========================================
+            # ==========================================
+# UPDATE SEGURO
+# ==========================================
 
-            stmt = text(f"""
-                UPDATE players
-                SET {coluna_alvo} = CASE
+        partes = nome_limpo.lower().split()
 
-                    WHEN {coluna_alvo} IS NULL
-                        THEN 1000 + :variacao
+        sobrenome = partes[0]
+        primeiro_nome = partes[1] if len(partes) > 1 else ""
 
-                    WHEN ({coluna_alvo} + :variacao) > 3000
-                        THEN 3000
+        stmt = text(f"""
+            UPDATE players
+            SET {coluna_alvo} = CASE
 
-                    WHEN ({coluna_alvo} + :variacao) < 800
-                        THEN 800
+                WHEN {coluna_alvo} IS NULL
+                    THEN 1000 + :variacao
 
-                    ELSE ROUND({coluna_alvo} + :variacao)
+                WHEN ({coluna_alvo} + :variacao) > 3000
+                    THEN 3000
 
-                END
+                WHEN ({coluna_alvo} + :variacao) < 800
+                    THEN 800
 
-                WHERE LOWER(TRIM(nome)) = :nome
-            """)
+                ELSE ROUND({coluna_alvo} + :variacao)
 
-            resultado = db.execute(
-                stmt,
-                {
-                    "variacao": variacao,
-                    "nome": nome_limpo.lower()
-                }
-            )
+            END
 
-            if resultado.rowcount > 0:
-                jogadores_atualizados += 1
-                print(f"Atualizado: {nome_limpo} ({variacao})")
+            WHERE LOWER(nome) LIKE :sobrenome
+            AND LOWER(nome) LIKE :primeiro_nome
+        """)
+
+        resultado = db.execute(
+        stmt,
+        {
+            "variacao": variacao,
+            "sobrenome": f"%{sobrenome}%",
+            "primeiro_nome": f"%{primeiro_nome}%"
+        }
+    )
+
+        if resultado.rowcount > 0:
+            jogadores_atualizados += 1
+            print(f"Atualizado: {nome_limpo} ({variacao})")
 
         db.commit()
 
