@@ -296,12 +296,23 @@ def update_ratings(
 
 
 # 🚀 ROTA DE IMPORTAÇÃO AUTOMÁTICA VIA LINK DO CHESS-RESULTS
+TORNEIOS_PROCESSADOS = set()
 @app.post("/admin/import-tournament", tags=["Administração (Requer Token)"])
 def import_tournament(
     payload: TournamentImportRequest,
     db: Session = Depends(get_db),
     token: str = Depends(verify_admin_token)
 ):
+    # Exemplo de trava simples
+# No topo do seu arquivo, crie uma lista global (atenção: reinicia no deploy)
+
+
+# Dentro da função import_tournament:
+    if payload.url in TORNEIOS_PROCESSADOS:
+        raise HTTPException(status_code=400, detail="Este torneio já foi processado anteriormente!")
+
+# ... após terminar o loop com sucesso:
+    TORNEIOS_PROCESSADOS.add(payload.url)
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
 
@@ -414,18 +425,21 @@ def import_tournament(
 
             # 5. UPDATE USANDO NOME LIMPO
             # Buscamos pelo primeiro e último nome após remover o "ME"
-            stmt = text(f"""
+            # ==========================================
+            # UPDATE "TEIMOSO" (Substitua tudo por isto)
+            # ==========================================
+            
+            # Tenta a busca completa
+            stmt_completo = text(f"""
                 UPDATE players
                 SET {coluna_alvo} = CASE
                     WHEN {coluna_alvo} IS NULL THEN 1000 + :variacao
-                    WHEN ({coluna_alvo} + :variacao) > 3000 THEN 3000
-                    WHEN ({coluna_alvo} + :variacao) < 800 THEN 800
                     ELSE ROUND({coluna_alvo} + :variacao)
                 END
                 WHERE LOWER(nome) LIKE :primeiro_nome AND LOWER(nome) LIKE :ultimo_nome
             """)
             
-            resultado = db.execute(stmt, {
+            resultado = db.execute(stmt_completo, {
                 "variacao": variacao,
                 "primeiro_nome": f"%{partes_busca[0]}%",
                 "ultimo_nome": f"%{partes_busca[-1]}%"
@@ -433,9 +447,29 @@ def import_tournament(
             
             if resultado.rowcount > 0:
                 jogadores_atualizados += 1
-                print(f"DEBUG: Sucesso! Atualizado: {nome_limpo_busca}")
+                print(f"DEBUG: Sucesso! Atualizado: {nome_final}")
             else:
-                print(f"DEBUG: Nenhuma correspondência para: {nome_limpo_busca}")
+                # Se falhou, tenta buscar APENAS PELO SOBRENOME PRINCIPAL
+                sobrenome_principal = partes_busca[-1]
+                stmt_teimoso = text(f"""
+                    UPDATE players
+                    SET {coluna_alvo} = CASE
+                        WHEN {coluna_alvo} IS NULL THEN 1000 + :variacao
+                        ELSE ROUND({coluna_alvo} + :variacao)
+                    END
+                    WHERE LOWER(nome) LIKE :busca
+                """)
+                
+                resultado_teimoso = db.execute(stmt_teimoso, {
+                    "variacao": variacao,
+                    "busca": f"%{sobrenome_principal}%"
+                })
+                
+                if resultado_teimoso.rowcount > 0:
+                    jogadores_atualizados += 1
+                    print(f"DEBUG: Sucesso (via sobrenome)! Atualizado: {nome_final}")
+                else:
+                    print(f"DEBUG: FALHOU DEFINITIVAMENTE -> {nome_final}")
 
         db.commit()
 
