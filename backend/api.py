@@ -301,72 +301,57 @@ def import_tournament(
     db: Session = Depends(get_db),
     token: str = Depends(verify_admin_token)
 ):
-    """
-    Acessa o link do Chess-Results enviado, lê a tabela de classificação,
-    identifica o ritmo do torneio e atualiza os ratings correspondentes no Neon.
-    """
     try:
-        # 1. Baixa a página do torneio simulando um navegador real
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        headers = {"User-Agent": "Mozilla/5.0"}
         resposta = requests.get(payload.url, headers=headers)
         
         if resposta.status_code != 200:
-            raise HTTPException(status_code=400, detail="Não foi possível acessar o link do Chess-Results.")
+            raise HTTPException(status_code=400, detail="Não foi possível acessar o link.")
 
         soup = BeautifulSoup(resposta.text, "html.parser")
         
-        # 2. Procura pela tabela clássica de classificação do Chess-Results
-        tabela = soup.find("table", {"class": "CRtable"})
+        # BUSCA INTELIGENTE: Pega a tabela que contém a maior quantidade de linhas
+        # Isso ignora o nome da classe CSS e foca no conteúdo
+        tabela = max(soup.find_all("table"), key=lambda t: len(t.find_all("tr")), default=None)
+        
         if not tabela:
-            raise HTTPException(status_code=400, detail="A tabela do torneio ('CRtable') não foi encontrada no link fornecido.")
+            raise HTTPException(status_code=400, detail="Não foi possível identificar a tabela de resultados.")
 
         linhas = tabela.find_all("tr")
         
-        # 3. Descobre o ritmo de jogo pelo título do torneio para saber qual coluna alterar
+        # Ritmo
         titulo = soup.title.string.lower() if soup.title else ""
-        coluna_alvo = "rating_std"  # Padrão: Absoluto/Standard
-        
-        if "blitz" in titulo or "relampago" in titulo or "relâmpago" in titulo:
-            coluna_alvo = "rating_blz"
-        elif "rapid" in titulo or "rapido" in titulo or "rápido" in titulo:
-            coluna_alvo = "rating_rpd"
+        coluna_alvo = "rating_blz" if any(x in titulo for x in ["blitz", "relampago"]) else ("rating_rpd" if any(x in titulo for x in ["rapid", "rapido"]) else "rating_std")
 
         jogadores_atualizados = 0
 
-        # 4. Varre os dados coletados (pula a linha 0 que é o cabeçalho)
+        # Loop (pula o cabeçalho)
         for linha in linhas[1:]:
             colunas = linha.find_all("td")
-            if len(colunas) < 5:
-                continue
+            # Ajuste de tamanho mínimo para garantir que temos dados
+            if len(colunas) < 3: continue
             
-            # Estrutura do Chess-Results: Nome do enxadrista fica no bloco de texto limpo
-            nome_jogador = colunas[3].text.strip()
+            # Pela estrutura que você enviou: Nome está na coluna 1, Rating na coluna 2
+            raw_nome = colunas[1].text.strip()
+            rating_raw = colunas[2].text.strip()
             
-            # Filtra apenas os números do campo de rating (ignora letras ou flags de países)
-            rating_limpo = "".join(filter(str.isdigit, colunas[4].text.strip()))
-            if not rating_limpo:
-                continue
-                
+            rating_limpo = "".join(filter(str.isdigit, rating_raw))
+            if not rating_limpo: continue
+            
             novo_rating = int(rating_limpo)
+            
+            # Remove títulos (NM, AFM, etc) para comparar com o banco
+            nome_final = raw_nome.replace("NM", "").replace("AFM", "").replace("WNM", "").replace("AIM", "").strip()
 
-            # 5. Executa a query de atualização direta no Neon cruzando pelo nome
-            stmt = text(f"""
-                UPDATE players 
-                SET {coluna_alvo} = :rating 
-                WHERE LOWER(nome) = LOWER(:nome)
-            """)
-            resultado = db.execute(stmt, {"rating": novo_rating, "nome": nome_jogador})
+            stmt = text(f"UPDATE players SET {coluna_alvo} = :rating WHERE LOWER(nome) LIKE LOWER(:nome)")
+            resultado = db.execute(stmt, {"rating": novo_rating, "nome": f"%{nome_final}%"})
             
             if resultado.rowcount > 0:
                 jogadores_atualizados += 1
 
         db.commit()
-        
-        return {
-            "status": "Sucesso",
-            "message": f"O ritmo detectado foi '{coluna_alvo.split('_')[1].upper()}'. Atualizados {jogadores_atualizados} enxadristas!"
-        }
+        return {"status": "Sucesso", "message": f"Atualizados {jogadores_atualizados} enxadristas!"}
 
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Erro interno ao processar torneio: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
