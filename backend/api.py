@@ -1,10 +1,15 @@
 import os
+import csv
+from io import StringIO
 from typing import List
 from pydantic import BaseModel
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
-from sqlalchemy import create_engine, Column, Integer, String
+from fastapi.responses import StreamingResponse
+
+# Aqui estão todas as ferramentas necessárias para o banco rodar sem erros:
+from sqlalchemy import create_engine, Column, Integer, String, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 
