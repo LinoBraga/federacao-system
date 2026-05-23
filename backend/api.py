@@ -336,26 +336,22 @@ def import_tournament(
             colunas = linha.find_all("td")
             if len(colunas) < 3: continue
             
-            # FILTRO DE OURO: A primeira coluna deve ser o Rank (um número)
             rank_text = colunas[0].text.strip()
-            if not rank_text.isdigit(): 
-                continue # Pula cabeçalhos, rodapés e linhas vazias
+            if not rank_text.isdigit(): continue
             
             rating_raw = colunas[2].text.strip()
             rating_limpo = "".join(filter(str.isdigit, rating_raw))
-            
-            if not rating_limpo or len(rating_limpo) > 4:
-                continue
+            if not rating_limpo or len(rating_limpo) > 4: continue
                 
             novo_rating = int(rating_limpo)
             nome_raw = colunas[1].text.strip()
             nome_limpo = "".join([i for i in nome_raw if not i.isdigit()]).replace("NM","").replace("AFM","").replace("WNM","").replace("AIM","").strip()
             
-            if len(nome_limpo) < 3: continue
-
-            # Busca inteligente
             partes_nome = nome_limpo.split()
             termo_busca = f"%{partes_nome[0]}%{partes_nome[-1]}%" if len(partes_nome) >= 2 else f"%{nome_limpo}%"
+
+            # DEBUG: O Render vai gravar isso na aba "Logs"
+            print(f"DEBUG: Tentando atualizar '{nome_limpo}' com termo '{termo_busca}'")
 
             stmt = text(f"UPDATE players SET {coluna_alvo} = :rating WHERE LOWER(nome) LIKE LOWER(:nome)")
             res = db.execute(stmt, {"rating": novo_rating, "nome": termo_busca})
