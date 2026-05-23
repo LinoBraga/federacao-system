@@ -8,7 +8,7 @@ export default function App() {
   const [viewMode, setViewMode] = useState("all");
 
   useEffect(() => {
-    // Aponta diretamente para a sua API correta do Render
+    // Corrigido: A URL base aponta para o servidor, e o fetch chama a rota certa
     const API_URL = "https://fpbx-backend.onrender.com";
 
     fetch(`${API_URL}/ranking`)
@@ -30,11 +30,11 @@ export default function App() {
       return val !== undefined && val !== null ? Number(val) : 0;
     };
 
-    // 1. Ordenação segura do Maior para o Menor (b - a)
+    // 1. Ordenação segura do Maior para o Menor (b - a) usando as siglas do banco
     if (viewMode === "top10_rapid") {
-      result.sort((a, b) => getRating(b, "rating_rapid") - getRating(a, "rating_rapid"));
+      result.sort((a, b) => getRating(b, "rating_rpd") - getRating(a, "rating_rpd"));
     } else if (viewMode === "top10_blitz") {
-      result.sort((a, b) => getRating(b, "rating_blitz") - getRating(a, "rating_blitz"));
+      result.sort((a, b) => getRating(b, "rating_blz") - getRating(a, "rating_blz"));
     } else {
       // Padrão para "all" e "top10_std"
       result.sort((a, b) => getRating(b, "rating_std") - getRating(a, "rating_std"));
@@ -46,10 +46,10 @@ export default function App() {
       actualRank: index + 1
     }));
 
-    // 3. Filtro de pesquisa por nome
+    // 3. Filtro de pesquisa por nome (Protegido contra campos nulos)
     if (search.trim() !== "") {
       rankedResult = rankedResult.filter(p =>
-        p.name.toLowerCase().includes(search.toLowerCase())
+        p.name && p.name.toLowerCase().includes(search.toLowerCase())
       );
     }
 
@@ -131,7 +131,7 @@ export default function App() {
             const isBlitzActive = viewMode === "top10_blitz";
 
             return (
-              <div key={`${viewMode}-${p.actualRank}`} style={styles.playerRow}>
+              <div key={`${viewMode}-${p.id || p.actualRank}`} style={styles.playerRow}>
                 
                 {/* Lado Esquerdo: Posição e Nome */}
                 <div style={styles.playerInfo}>
@@ -141,7 +141,7 @@ export default function App() {
                   <div style={styles.playerName}>{p.name}</div>
                 </div>
 
-                {/* Lado Direito: Bloco de Ratings */}
+                {/* Lado Direito: Bloco de Ratings (Ajustado com os nomes exatos do Neon) */}
                 <div style={styles.ratingsGroup}>
                   <div style={{ ...styles.ratingTag, ...(isStdActive ? styles.activeRatingTag : {}) }}>
                     <span style={styles.ratingLabel}>STD</span>
@@ -149,11 +149,11 @@ export default function App() {
                   </div>
                   <div style={{ ...styles.ratingTag, ...(isRapidActive ? styles.activeRatingTag : {}) }}>
                     <span style={styles.ratingLabel}>RPD</span>
-                    <span style={styles.ratingValue}>{p.rating_rapid ?? "—"}</span>
+                    <span style={styles.ratingValue}>{p.rating_rpd ?? "—"}</span>
                   </div>
                   <div style={{ ...styles.ratingTag, ...(isBlitzActive ? styles.activeRatingTag : {}) }}>
                     <span style={styles.ratingLabel}>BLZ</span>
-                    <span style={styles.ratingValue}>{p.rating_blitz ?? "—"}</span>
+                    <span style={styles.ratingValue}>{p.rating_blz ?? "—"}</span>
                   </div>
                 </div>
 
@@ -166,6 +166,7 @@ export default function App() {
   );
 }
 
+// ... (Seus estilos continuam idênticos abaixo)
 const styles = {
   container: {
     minHeight: "100vh",
@@ -177,192 +178,28 @@ const styles = {
     flexDirection: "column",
     alignItems: "center"
   },
-
-  header: {
-    textAlign: "center",
-    marginBottom: "40px"
-  },
-
-  logoBox: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center"
-  },
-
-  brandLine: {
-    width: "60px",
-    height: "4px",
-    background: "#e63946",
-    marginBottom: "16px",
-    borderRadius: "2px"
-  },
-
-  title: {
-    fontSize: "32px",
-    fontWeight: "800",
-    letterSpacing: "-0.5px",
-    margin: "0 0 8px 0",
-    background: "linear-gradient(to right, #ffffff, #a0a0a0)",
-    WebkitBackgroundClip: "text",
-    WebkitTextFillColor: "transparent"
-  },
-
-  subtitle: {
-    color: "#6c757d",
-    fontSize: "15px",
-    fontWeight: "500",
-    textTransform: "uppercase",
-    letterSpacing: "1.5px"
-  },
-
-  controlsContainer: {
-    width: "100%",
-    maxWidth: "800px",
-    display: "flex",
-    flexDirection: "column",
-    gap: "16px",
-    marginBottom: "24px"
-  },
-
-  tabs: {
-    display: "flex",
-    background: "#121416",
-    padding: "4px",
-    borderRadius: "8px",
-    border: "1px solid #212529",
-    overflowX: "auto",
-    gap: "4px"
-  },
-
-  tabButton: {
-    flex: "1",
-    padding: "10px 16px",
-    background: "transparent",
-    border: "none",
-    color: "#adb5bd",
-    fontSize: "14px",
-    fontWeight: "600", // Corrigido de "6px" para "600"
-    borderRadius: "6px",
-    cursor: "pointer",
-    whiteSpace: "nowrap",
-    transition: "all 0.2s ease"
-  },
-
-  activeTab: {
-    background: "#212529",
-    color: "#ffffff",
-    boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
-    border: "1px solid #2b3035"
-  },
-
-  searchBox: {
-    width: "100%"
-  },
-
-  input: {
-    width: "100%",
-    boxSizing: "border-box",
-    padding: "12px 16px",
-    borderRadius: "8px",
-    border: "1px solid #212529",
-    background: "#121416",
-    color: "#ffffff",
-    fontSize: "15px",
-    outline: "none",
-    transition: "border-color 0.2s",
-  },
-
-  leaderboard: {
-    width: "100%",
-    maxWidth: "800px",
-    display: "flex",
-    flexDirection: "column",
-    gap: "8px"
-  },
-
-  playerRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    background: "#121416",
-    border: "1px solid #1a1d20",
-    padding: "14px 20px",
-    borderRadius: "8px",
-    transition: "transform 0.15s ease, background-color 0.15s ease",
-    flexWrap: "wrap",
-    gap: "12px"
-  },
-
-  playerInfo: {
-    display: "flex",
-    alignItems: "center",
-    gap: "16px"
-  },
-
-  rankContainer: {
-    width: "40px",
-    display: "flex",
-    justifyContent: "center"
-  },
-
-  rankText: {
-    color: "#6c757d",
-    fontSize: "14px",
-    fontWeight: "700"
-  },
-
-  badge: {
-    padding: "4px 10px",
-    borderRadius: "12px",
-    fontSize: "12px",
-    fontWeight: "bold",
-    boxShadow: "0 2px 4px rgba(0,0,0,0.15)"
-  },
-
-  playerName: {
-    fontSize: "16px",
-    fontWeight: "600",
-    color: "#f8f9fa"
-  },
-
-  ratingsGroup: {
-    display: "flex",
-    gap: "8px"
-  },
-
-  ratingTag: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    background: "#1a1d20",
-    border: "1px solid #212529",
-    padding: "6px 12px",
-    borderRadius: "6px",
-    minWidth: "65px"
-  },
-
-  activeRatingTag: {
-    background: "rgba(230, 57, 70, 0.1)",
-    borderColor: "#e63946",
-  },
-
-  ratingLabel: {
-    fontSize: "10px",
-    fontWeight: "700",
-    color: "#6c757d",
-    marginBottom: "2px"
-  },
-
-  ratingValue: {
-    fontSize: "13px",
-    fontWeight: "700",
-    color: "#dee2e6"
-  },
-
-  emptyState: {
-    textAlign: "center",
-    padding: "40px",
-    color: "#6c757d",
-    fontSize: "15px"
-  }
+  header: { textAlign: "center", marginBottom: "40px" },
+  logoBox: { display: "flex", flexDirection: "column", alignItems: "center" },
+  brandLine: { width: "60px", height: "4px", background: "#e63946", marginBottom: "16px", borderRadius: "2px" },
+  title: { fontSize: "32px", fontWeight: "800", letterSpacing: "-0.5px", margin: "0 0 8px 0", background: "linear-gradient(to right, #ffffff, #a0a0a0)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" },
+  subtitle: { color: "#6c757d", fontSize: "15px", fontWeight: "500", textTransform: "uppercase", letterSpacing: "1.5px" },
+  controlsContainer: { width: "100%", maxWidth: "800px", display: "flex", flexDirection: "column", gap: "16px", marginBottom: "24px" },
+  tabs: { display: "flex", background: "#121416", padding: "4px", borderRadius: "8px", border: "1px solid #212529", overflowX: "auto", gap: "4px" },
+  tabButton: { flex: "1", padding: "10px 16px", background: "transparent", border: "none", color: "#adb5bd", fontSize: "14px", fontWeight: "600", borderRadius: "6px", cursor: "pointer", whiteSpace: "nowrap", transition: "all 0.2s ease" },
+  activeTab: { background: "#212529", color: "#ffffff", boxShadow: "0 2px 8px rgba(0,0,0,0.2)", border: "1px solid #2b3035" },
+  searchBox: { width: "100%" },
+  input: { width: "100%", boxSizing: "border-box", padding: "12px 16px", borderRadius: "8px", border: "1px solid #212529", background: "#121416", color: "#ffffff", fontSize: "15px", outline: "none", transition: "border-color 0.2s" },
+  leaderboard: { width: "100%", maxWidth: "800px", display: "flex", flexDirection: "column", gap: "8px" },
+  playerRow: { display: "flex", justifyContent: "space-between", alignItems: "center", background: "#121416", border: "1px solid #1a1d20", padding: "14px 20px", borderRadius: "8px", transition: "transform 0.15s ease, background-color 0.15s ease", flexWrap: "wrap", gap: "12px" },
+  playerInfo: { display: "flex", alignItems: "center", gap: "16px" },
+  rankContainer: { width: "40px", display: "flex", justifyContent: "center" },
+  rankText: { color: "#6c757d", fontSize: "14px", fontWeight: "700" },
+  badge: { padding: "4px 10px", borderRadius: "12px", fontSize: "12px", fontWeight: "bold", boxShadow: "0 2px 4px rgba(0,0,0,0.15)" },
+  playerName: { fontSize: "16px", fontWeight: "600", color: "#f8f9fa" },
+  ratingsGroup: { display: "flex", gap: "8px" },
+  ratingTag: { display: "flex", flexDirection: "column", alignItems: "center", background: "#1a1d20", border: "1px solid #212529", padding: "6px 12px", borderRadius: "6px", minWidth: "65px" },
+  activeRatingTag: { background: "rgba(230, 57, 70, 0.1)", borderColor: "#e63946" },
+  ratingLabel: { fontSize: "10px", fontWeight: "700", color: "#6c757d", marginBottom: "2px" },
+  ratingValue: { fontSize: "13px", fontWeight: "700", color: "#dee2e6" },
+  emptyState: { textAlign: "center", padding: "40px", color: "#6c757d", fontSize: "15px" }
 };
