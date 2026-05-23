@@ -5,14 +5,17 @@ export default function App() {
   const [search, setSearch] = useState("");
   
   // viewMode: "all", "top10_std", "top10_rapid" ou "top10_blitz"
-  cconst [viewMode, setViewMode] = useState("all");
+  const [viewMode, setViewMode] = useState("all");
 
   useEffect(() => {
-    // Pega o link do Render configurado na Vercel. Se não achar, usa o seu PC local.
-    const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+    // Aponta diretamente para a sua API correta do Render
+    const API_URL = "https://fpbx-backend.onrender.com";
 
     fetch(`${API_URL}/ranking`)
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) throw new Error("Erro na resposta do servidor");
+        return res.json();
+      })
       .then(data => setPlayers(data))
       .catch(err => console.error("Erro ao buscar ranking:", err));
   }, []);
@@ -238,7 +241,7 @@ const styles = {
     border: "none",
     color: "#adb5bd",
     fontSize: "14px",
-    fontWeight: "6px",
+    fontWeight: "600", // Corrigido de "6px" para "600"
     borderRadius: "6px",
     cursor: "pointer",
     whiteSpace: "nowrap",

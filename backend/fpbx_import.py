@@ -1,7 +1,25 @@
 import csv
 from models import Player
+from database import SessionLocal  # Importa a conexão do seu próprio projeto
+from fpbx_import import import_official_list
 
+def executar():
+    print("Conectando ao banco de dados do Neon e iniciando importação...")
+    
+    # Abre a conexão com o banco (que já está usando a URL do Neon configurada no seu projeto)
+    db = SessionLocal()
+    
+    try:
+        # Altere "fpbx_players.csv" para o nome exato do seu arquivo com a extensão (.csv)
+        total = import_official_list(db, "fpbx_players.csv") 
+        print(f"Sucesso! {total} jogadores foram importados/atualizados no banco do Neon.")
+    except Exception as e:
+        print(f"Ocorreu um erro durante a importação: {e}")
+    finally:
+        db.close()
 
+if __name__ == "__main__":
+    executar()
 def import_official_list(db, filepath: str):
 
     with open(filepath, encoding="utf-8") as f:
