@@ -332,32 +332,33 @@ def import_tournament(
         jogadores_atualizados = 0
 
         # 3. Processamento com travas de segurança
-        for linha in linhas[1:]:
+       for linha in linhas[1:]:
             colunas = linha.find_all("td")
             if len(colunas) < 3: continue
             
-            # Extração segura do rating
+            # FILTRO DE OURO: A primeira coluna deve ser o Rank (um número)
+            rank_text = colunas[0].text.strip()
+            if not rank_text.isdigit(): 
+                continue # Pula cabeçalhos, rodapés e linhas vazias
+            
             rating_raw = colunas[2].text.strip()
             rating_limpo = "".join(filter(str.isdigit, rating_raw))
             
-            # TRAVA DE SEGURANÇA: ignora valores vazios ou absurdamente grandes (rodapés)
             if not rating_limpo or len(rating_limpo) > 4:
                 continue
                 
             novo_rating = int(rating_limpo)
-            
-            # Extração e limpeza do nome
             nome_raw = colunas[1].text.strip()
             nome_limpo = "".join([i for i in nome_raw if not i.isdigit()]).replace("NM","").replace("AFM","").replace("WNM","").replace("AIM","").strip()
-            print(f"DEBUG: Buscando no banco por: '{nome_limpo}'")
-
-            stmt = text(f"UPDATE players SET {coluna_alvo} = :rating WHERE LOWER(nome) LIKE LOWER(:nome)")
-    
+            
             if len(nome_limpo) < 3: continue
 
-            # 4. Update
+            # Busca inteligente
+            partes_nome = nome_limpo.split()
+            termo_busca = f"%{partes_nome[0]}%{partes_nome[-1]}%" if len(partes_nome) >= 2 else f"%{nome_limpo}%"
+
             stmt = text(f"UPDATE players SET {coluna_alvo} = :rating WHERE LOWER(nome) LIKE LOWER(:nome)")
-            res = db.execute(stmt, {"rating": novo_rating, "nome": f"%{nome_limpo}%"})
+            res = db.execute(stmt, {"rating": novo_rating, "nome": termo_busca})
             
             if res.rowcount > 0:
                 jogadores_atualizados += 1
