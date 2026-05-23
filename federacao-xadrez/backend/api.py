@@ -315,10 +315,20 @@ def import_tournament(
 
         soup = BeautifulSoup(resposta.text, "html.parser")
         
-        # 2. Procura pela tabela clássica de classificação do Chess-Results
-        tabela = soup.find("table", {"class": "CRtable"})
+        # 2. Procura pela tabela de resultados. 
+        # Algumas páginas não usam "CRtable", mas usam tabelas simples.
+        # Vamos pegar todas as tabelas e encontrar a que tem mais linhas de dados.
+        tabelas = soup.find_all("table")
+        tabela = None
+        
+        for t in tabelas:
+            # Filtramos tabelas que tenham pelo menos 5 linhas (para descartar tabelas de menu/header)
+            if len(t.find_all("tr")) > 5:
+                tabela = t
+                break
+        
         if not tabela:
-            raise HTTPException(status_code=400, detail="A tabela do torneio ('CRtable') não foi encontrada no link fornecido.")
+            raise HTTPException(status_code=400, detail="Não foi possível encontrar a tabela de resultados no link.")
 
         linhas = tabela.find_all("tr")
         
