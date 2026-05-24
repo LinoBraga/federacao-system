@@ -7,11 +7,9 @@ export default function App() {
 
   useEffect(() => {
     const API_URL = "https://fpbx-backend.onrender.com";
-    
-    // Define a rota baseada no que o usuário selecionou
-    // Se for "all" ou "ranking_std", usamos a rota de padrão
+
     let endpoint = "/ranking/ranking_std";
-    
+
     if (viewMode === "ranking_rapid") endpoint = "/ranking/ranking_rapid";
     if (viewMode === "ranking_blitz") endpoint = "/ranking/ranking_blitz";
 
@@ -21,43 +19,41 @@ export default function App() {
         return res.json();
       })
       .then(data => {
-        // SEGURANÇA: Garante que o estado sempre receba um array
         setPlayers(Array.isArray(data) ? data : []);
       })
       .catch(err => {
         console.error("Erro ao buscar ranking:", err);
-        setPlayers([]); // Previne o erro "is not iterable" ao zerar o estado
+        setPlayers([]);
       });
-  }, [viewMode]); // Adicionamos [viewMode] para o ranking atualizar ao trocar de aba
+  }, [viewMode]);
 
-  // Função auxiliar para garantir que estamos pegando o valor numérico correto
   const getRating = (player, field) => {
     const val = player[field];
-    return (val !== undefined && val !== null && val !== "") ? Number(val) : 1800; // Assume 1800 se nulo
+    return val ? Number(val) : 1800;
   };
 
   const visiblePlayers = useMemo(() => {
-    // 1. Define a chave de ordenação baseada no modo
     const ratingMap = {
       "ranking_std": "rating_std",
       "ranking_rapid": "rating_rpd",
       "ranking_blitz": "rating_blz"
     };
-    const ratingKey = ratingMap[viewMode] || "rating_std";
 
-    // 2. Ordena (do maior para o menor)
+    const ratingKey =
+      viewMode === "all"
+        ? "rating_std"
+        : ratingMap[viewMode];
+
     let sorted = [...players].sort((a, b) => {
       return getRating(b, ratingKey) - getRating(a, ratingKey);
     });
 
-    // 3. Filtra por nome
     if (search.trim() !== "") {
       sorted = sorted.filter(p =>
-        p.name && p.name.toLowerCase().includes(search.toLowerCase())
+        p.name?.toLowerCase().includes(search.toLowerCase())
       );
     }
 
-    // 4. Gera ranking absoluto (Todos)
     return sorted.map((player, index) => ({
       ...player,
       actualRank: index + 1
@@ -65,9 +61,13 @@ export default function App() {
   }, [players, viewMode, search]);
 
   const renderRankBadge = (rank) => {
-    if (rank === 1) return <span style={{ ...styles.badge, background: "#ffd700", color: "#000" }}>1º</span>;
-    if (rank === 2) return <span style={{ ...styles.badge, background: "#c0c0c0", color: "#000" }}>2º</span>;
-    if (rank === 3) return <span style={{ ...styles.badge, background: "#cd7f32", color: "#fff" }}>3º</span>;
+    if (rank === 1)
+      return <span style={{ ...styles.badge, background: "#ffd700", color: "#000" }}>1º</span>;
+    if (rank === 2)
+      return <span style={{ ...styles.badge, background: "#c0c0c0", color: "#000" }}>2º</span>;
+    if (rank === 3)
+      return <span style={{ ...styles.badge, background: "#cd7f32", color: "#fff" }}>3º</span>;
+
     return <span style={styles.rankText}>#{rank}</span>;
   };
 
@@ -80,10 +80,45 @@ export default function App() {
 
       <div style={styles.controlsContainer}>
         <div style={styles.tabs}>
-          <button onClick={() => setViewMode("all")} style={{ ...styles.tabButton, ...(viewMode === "all" ? styles.activeTab : {}) }}>Todos</button>
-          <button onClick={() => setViewMode("ranking_std")} style={{ ...styles.tabButton, ...(viewMode === "ranking_std" ? styles.activeTab : {}) }}>Standard</button>
-          <button onClick={() => setViewMode("ranking_rapid")} style={{ ...styles.tabButton, ...(viewMode === "ranking_rapid" ? styles.activeTab : {}) }}>Rápido</button>
-          <button onClick={() => setViewMode("ranking_blitz")} style={{ ...styles.tabButton, ...(viewMode === "ranking_blitz" ? styles.activeTab : {}) }}>Blitz</button>
+          <button
+            onClick={() => setViewMode("all")}
+            style={{
+              ...styles.tabButton,
+              ...(viewMode === "all" ? styles.activeTab : {})
+            }}
+          >
+            Todos
+          </button>
+
+          <button
+            onClick={() => setViewMode("ranking_std")}
+            style={{
+              ...styles.tabButton,
+              ...(viewMode === "ranking_std" ? styles.activeTab : {})
+            }}
+          >
+            Standard
+          </button>
+
+          <button
+            onClick={() => setViewMode("ranking_rapid")}
+            style={{
+              ...styles.tabButton,
+              ...(viewMode === "ranking_rapid" ? styles.activeTab : {})
+            }}
+          >
+            Rápido
+          </button>
+
+          <button
+            onClick={() => setViewMode("ranking_blitz")}
+            style={{
+              ...styles.tabButton,
+              ...(viewMode === "ranking_blitz" ? styles.activeTab : {})
+            }}
+          >
+            Blitz
+          </button>
         </div>
 
         <input
@@ -101,19 +136,39 @@ export default function App() {
           visiblePlayers.map((p) => (
             <div key={p.id} style={styles.playerRow}>
               <div style={styles.playerInfo}>
-                <div style={styles.rankContainer}>{renderRankBadge(p.actualRank)}</div>
+                <div style={styles.rankContainer}>
+                  {renderRankBadge(p.actualRank)}
+                </div>
                 <div style={styles.playerName}>{p.name}</div>
               </div>
+
               <div style={styles.ratingsGroup}>
-                <div style={{ ...styles.ratingTag, ...(viewMode === "ranking_std" ? styles.activeRatingTag : {}) }}>
+                <div
+                  style={{
+                    ...styles.ratingTag,
+                    ...(viewMode === "ranking_std" ? styles.activeRatingTag : {})
+                  }}
+                >
                   <span style={styles.ratingLabel}>STD</span>
                   <span style={styles.ratingValue}>{p.rating_std}</span>
                 </div>
-                <div style={{ ...styles.ratingTag, ...(viewMode === "ranking_rapid" ? styles.activeRatingTag : {}) }}>
+
+                <div
+                  style={{
+                    ...styles.ratingTag,
+                    ...(viewMode === "ranking_rapid" ? styles.activeRatingTag : {})
+                  }}
+                >
                   <span style={styles.ratingLabel}>RPD</span>
                   <span style={styles.ratingValue}>{p.rating_rpd}</span>
                 </div>
-                <div style={{ ...styles.ratingTag, ...(viewMode === "ranking_blitz" ? styles.activeRatingTag : {}) }}>
+
+                <div
+                  style={{
+                    ...styles.ratingTag,
+                    ...(viewMode === "ranking_blitz" ? styles.activeRatingTag : {})
+                  }}
+                >
                   <span style={styles.ratingLabel}>BLZ</span>
                   <span style={styles.ratingValue}>{p.rating_blz}</span>
                 </div>
@@ -127,60 +182,157 @@ export default function App() {
 }
 
 const styles = {
-  // ... mantenha os outros
-  container: { 
-    minHeight: "100vh", 
-    background: "#08090a", 
-    color: "#f1f3f5", 
-    padding: "20px 10px", // Reduzi o padding nas laterais para telas pequenas
-    display: "flex", 
-    flexDirection: "column", 
-    alignItems: "center" 
+  container: {
+    minHeight: "100vh",
+    background: "#08090a",
+    color: "#f1f3f5",
+    padding: "20px 10px",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center"
   },
-  controlsContainer: { 
-    width: "100%", 
-    maxWidth: "800px", 
-    display: "flex", 
-    flexDirection: "column", 
-    gap: "10px", 
-    marginBottom: "20px" 
+
+  header: {
+    textAlign: "center",
+    marginBottom: "20px"
   },
-  tabs: { 
-    display: "flex", 
-    background: "#121416", 
-    padding: "4px", 
-    borderRadius: "8px", 
-    border: "1px solid #212529", 
-    overflowX: "auto", // Permite rolar os botões se não couberem na tela
-    gap: "4px",
-    width: "100%"
+
+  title: {
+    fontSize: "22px",
+    fontWeight: "700"
   },
-  tabButton: { 
-    flex: "1 0 auto", // Impede que os botões fiquem espremidos
-    padding: "10px 12px", 
-    fontSize: "13px", 
-    // ... restante
+
+  subtitle: {
+    fontSize: "13px",
+    color: "#adb5bd"
   },
-  playerRow: { 
-    display: "flex", 
-    justifyContent: "space-between", 
-    alignItems: "center", 
-    background: "#121416", 
-    padding: "12px", // Menos padding para caber mais info
-    borderRadius: "8px", 
-    border: "1px solid #1a1d20",
-    width: "100%", // Garante que a linha ocupe 100% do espaço disponível
-    boxSizing: "border-box" // Essencial para evitar que o padding quebre a largura
+
+  controlsContainer: {
+    width: "100%",
+    maxWidth: "800px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "10px",
+    marginBottom: "20px"
   },
-  ratingsGroup: { 
-    display: "flex", 
-    gap: "4px" // Menos espaço entre tags de rating
+
+  tabs: {
+    display: "flex",
+    background: "#121416",
+    padding: "6px",
+    borderRadius: "10px",
+    border: "1px solid #212529",
+    gap: "6px"
   },
-  ratingTag: { 
-    display: "flex", 
-    flexDirection: "column", 
-    alignItems: "center", 
-    padding: "4px 6px", // Tags menores
-    minWidth: "45px" // Tags mais estreitas
+
+  tabButton: {
+    flex: "1",
+    padding: "10px",
+    fontSize: "13px",
+    background: "transparent",
+    border: "1px solid transparent",
+    color: "#adb5bd",
+    borderRadius: "8px",
+    cursor: "pointer",
+    transition: "0.2s"
+  },
+
+  activeTab: {
+    border: "1px solid #ff3b3b",
+    background: "#1a1d20",
+    color: "#ff3b3b",
+    boxShadow: "0 0 10px rgba(255, 59, 59, 0.25)"
+  },
+
+  input: {
+    padding: "10px",
+    borderRadius: "8px",
+    border: "1px solid #212529",
+    background: "#121416",
+    color: "#fff",
+    outline: "none"
+  },
+
+  leaderboard: {
+    width: "100%",
+    maxWidth: "800px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "10px"
+  },
+
+  playerRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    background: "#121416",
+    padding: "12px",
+    borderRadius: "10px",
+    border: "1px solid #1a1d20"
+  },
+
+  playerInfo: {
+    display: "flex",
+    alignItems: "center",
+    gap: "10px"
+  },
+
+  playerName: {
+    fontSize: "14px",
+    fontWeight: "500"
+  },
+
+  ratingsGroup: {
+    display: "flex",
+    gap: "6px"
+  },
+
+  ratingTag: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    padding: "5px 7px",
+    borderRadius: "8px",
+    border: "1px solid #2a2f33",
+    background: "#0f1113",
+    minWidth: "50px"
+  },
+
+  activeRatingTag: {
+    border: "1px solid #ff3b3b",
+    background: "#1a1d20",
+    color: "#ff3b3b",
+    boxShadow: "0 0 8px rgba(255, 59, 59, 0.2)"
+  },
+
+  ratingLabel: {
+    fontSize: "10px",
+    color: "#868e96"
+  },
+
+  ratingValue: {
+    fontSize: "13px",
+    fontWeight: "600"
+  },
+
+  rankText: {
+    color: "#adb5bd"
+  },
+
+  badge: {
+    padding: "4px 8px",
+    borderRadius: "6px",
+    fontSize: "12px",
+    fontWeight: "700"
+  },
+
+  rankContainer: {
+    width: "40px"
+  },
+
+  emptyState: {
+    textAlign: "center",
+    color: "#868e96",
+    padding: "20px"
   }
 };
