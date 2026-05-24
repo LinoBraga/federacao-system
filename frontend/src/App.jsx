@@ -127,26 +127,60 @@ export default function App() {
 }
 
 const styles = {
-  container: { minHeight: "100vh", background: "#08090a", color: "#f1f3f5", padding: "40px 20px", display: "flex", flexDirection: "column", alignItems: "center" },
-  header: { textAlign: "center", marginBottom: "40px" },
-  title: { fontSize: "32px", fontWeight: "800", color: "#fff" },
-  subtitle: { color: "#6c757d", textTransform: "uppercase" },
-  controlsContainer: { width: "100%", maxWidth: "800px", display: "flex", flexDirection: "column", gap: "16px", marginBottom: "24px" },
-  tabs: { display: "flex", background: "#121416", padding: "4px", borderRadius: "8px", border: "1px solid #212529", gap: "4px" },
-  tabButton: { flex: "1", padding: "10px 16px", background: "transparent", border: "none", color: "#adb5bd", cursor: "pointer", borderRadius: "6px" },
-  activeTab: { background: "#212529", color: "#ffffff" },
-  input: { width: "100%", padding: "12px 16px", borderRadius: "8px", border: "1px solid #212529", background: "#121416", color: "#fff" },
-  leaderboard: { width: "100%", maxWidth: "800px", display: "flex", flexDirection: "column", gap: "8px" },
-  playerRow: { display: "flex", justifyContent: "space-between", alignItems: "center", background: "#121416", padding: "14px 20px", borderRadius: "8px", border: "1px solid #1a1d20" },
-  playerInfo: { display: "flex", alignItems: "center", gap: "16px" },
-  rankContainer: { width: "40px", display: "flex", justifyContent: "center" },
-  badge: { padding: "4px 10px", borderRadius: "12px", fontSize: "12px", fontWeight: "bold" },
-  rankText: { color: "#6c757d", fontWeight: "700" },
-  playerName: { fontSize: "16px", fontWeight: "600" },
-  ratingsGroup: { display: "flex", gap: "8px" },
-  ratingTag: { display: "flex", flexDirection: "column", alignItems: "center", background: "#1a1d20", padding: "6px 12px", borderRadius: "6px", minWidth: "60px" },
-  activeRatingTag: { borderColor: "#e63946", border: "1px solid #e63946" },
-  ratingLabel: { fontSize: "10px", color: "#6c757d" },
-  ratingValue: { fontSize: "13px", fontWeight: "700" },
-  emptyState: { textAlign: "center", color: "#6c757d" }
+  // ... mantenha os outros
+  container: { 
+    minHeight: "100vh", 
+    background: "#08090a", 
+    color: "#f1f3f5", 
+    padding: "20px 10px", // Reduzi o padding nas laterais para telas pequenas
+    display: "flex", 
+    flexDirection: "column", 
+    alignItems: "center" 
+  },
+  controlsContainer: { 
+    width: "100%", 
+    maxWidth: "800px", 
+    display: "flex", 
+    flexDirection: "column", 
+    gap: "10px", 
+    marginBottom: "20px" 
+  },
+  tabs: { 
+    display: "flex", 
+    background: "#121416", 
+    padding: "4px", 
+    borderRadius: "8px", 
+    border: "1px solid #212529", 
+    overflowX: "auto", // Permite rolar os botões se não couberem na tela
+    gap: "4px",
+    width: "100%"
+  },
+  tabButton: { 
+    flex: "1 0 auto", // Impede que os botões fiquem espremidos
+    padding: "10px 12px", 
+    fontSize: "13px", 
+    // ... restante
+  },
+  playerRow: { 
+    display: "flex", 
+    justifyContent: "space-between", 
+    alignItems: "center", 
+    background: "#121416", 
+    padding: "12px", // Menos padding para caber mais info
+    borderRadius: "8px", 
+    border: "1px solid #1a1d20",
+    width: "100%", // Garante que a linha ocupe 100% do espaço disponível
+    boxSizing: "border-box" // Essencial para evitar que o padding quebre a largura
+  },
+  ratingsGroup: { 
+    display: "flex", 
+    gap: "4px" // Menos espaço entre tags de rating
+  },
+  ratingTag: { 
+    display: "flex", 
+    flexDirection: "column", 
+    alignItems: "center", 
+    padding: "4px 6px", // Tags menores
+    minWidth: "45px" // Tags mais estreitas
+  }
 };
