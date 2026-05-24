@@ -7,11 +7,28 @@ export default function App() {
 
   useEffect(() => {
     const API_URL = "https://fpbx-backend.onrender.com";
-    fetch(`${API_URL}/ranking`)
-      .then(res => res.json())
-      .then(data => setPlayers(data))
-      .catch(err => console.error("Erro ao buscar ranking:", err));
-  }, []);
+    
+    // Define a rota baseada no que o usuário selecionou
+    // Se for "all" ou "ranking_std", usamos a rota de padrão
+    let endpoint = "/ranking/ranking_std";
+    
+    if (viewMode === "ranking_rapid") endpoint = "/ranking/ranking_rapid";
+    if (viewMode === "ranking_blitz") endpoint = "/ranking/ranking_blitz";
+
+    fetch(`${API_URL}${endpoint}`)
+      .then(res => {
+        if (!res.ok) throw new Error("Erro na rede");
+        return res.json();
+      })
+      .then(data => {
+        // SEGURANÇA: Garante que o estado sempre receba um array
+        setPlayers(Array.isArray(data) ? data : []);
+      })
+      .catch(err => {
+        console.error("Erro ao buscar ranking:", err);
+        setPlayers([]); // Previne o erro "is not iterable" ao zerar o estado
+      });
+  }, [viewMode]); // Adicionamos [viewMode] para o ranking atualizar ao trocar de aba
 
   // Função auxiliar para garantir que estamos pegando o valor numérico correto
   const getRating = (player, field) => {

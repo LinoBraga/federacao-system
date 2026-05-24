@@ -162,9 +162,17 @@ def import_fpbx_status():
 def home():
     return {"message": "API da Federação Paraibana de Xadrez online!"}
 
+# 1. Rota para quando o usuário clicar em "Todos" ou carregar a página inicialmente
+@app.get("/ranking", tags=["Consulta Pública"])
+def get_ranking_default(db: Session = Depends(get_db)):
+    # Retorna o padrão (std) para a chamada inicial do front
+    query = text("SELECT id, nome, clube, rating_std, rating_rpd, rating_blz FROM players ORDER BY rating_std DESC")
+    result = db.execute(query).fetchall()
+    return format_players(result)
+
+# 2. Rota dinâmica para os botões de ritmo (o que você já tem)
 @app.get("/ranking/{ritmo}", tags=["Consulta Pública"])
-def get_ranking(ritmo: str, db: Session = Depends(get_db)):
-    # Mapeamento para garantir segurança (evita SQL Injection)
+def get_ranking_by_ritmo(ritmo: str, db: Session = Depends(get_db)):
     colunas = {
         "ranking_std": "rating_std",
         "ranking_rapid": "rating_rpd",
@@ -175,30 +183,23 @@ def get_ranking(ritmo: str, db: Session = Depends(get_db)):
     if not coluna_selecionada:
         raise HTTPException(status_code=400, detail="Ritmo inválido")
 
-    try:
-        # A query agora é dinâmica com base no ritmo escolhido
-        query = text(f"""
-            SELECT id, nome, clube, rating_std, rating_rpd, rating_blz 
-            FROM players 
-            ORDER BY {coluna_selecionada} DESC
-        """)
-        
-        result = db.execute(query).fetchall()
-        
-        players_list = []
-        for row in result:
-            players_list.append({
-                "id": row[0],
-                "name": row[1],
-                "clube": row[2] if row[2] else "Sem Clube",
-                "rating_std": int(row[3] or 1800),
-                "rating_rpd": int(row[4] or 1800),
-                "rating_blz": int(row[5] or 1800)
-            })
-        return players_list
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao buscar ranking: {str(e)}")
+    query = text(f"SELECT id, nome, clube, rating_std, rating_rpd, rating_blz FROM players ORDER BY {coluna_selecionada} DESC")
+    result = db.execute(query).fetchall()
+    return format_players(result)
 
+# Função auxiliar para não repetir código
+def format_players(result):
+    players_list = []
+    for row in result:
+        players_list.append({
+            "id": row[0],
+            "name": row[1],
+            "clube": row[2] if row[2] else "Sem Clube",
+            "rating_std": int(row[3] or 1800),
+            "rating_rpd": int(row[4] or 1800),
+            "rating_blz": int(row[5] or 1800)
+        })
+    return players_list
 @app.get("/player/{player_id}", response_model=PlayerResponse, tags=["Consulta Pública"])
 def get_player(player_id: int, db: Session = Depends(get_db)):
     player = db.query(PlayerModel).filter(PlayerModel.id == player_id).first()
