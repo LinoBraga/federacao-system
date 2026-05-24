@@ -26,52 +26,33 @@ export default function App() {
   }, []);
 
   // Processa a lista com tratamento rigoroso de tipos (Garante do maior para o menor)
-  const visiblePlayers = useMemo(() => {
-    let result = [...players];
+ const visiblePlayers = useMemo(() => {
+    // 1. Identifica qual ritmo estamos consultando
+    // Se o viewMode for "ranking_rapid", "ranking_blitz" ou "ranking_std"
+    let ratingKey = "rating_std"; 
+    
+    if (viewMode === "ranking_rapid") ratingKey = "rating_rpd";
+    if (viewMode === "ranking_blitz") ratingKey = "rating_blz";
 
-    // Função auxiliar tolerante que aceita variações de nome de campo (blz vs blitz)
-    const getRating = (player, field) => {
-      let val = player[field];
-      
-      // Se estiver procurando blitz e vier nulo, tenta variações comuns
-      if (field === "rating_blz" && (val === undefined || val === null)) {
-        val = player["rating_blitz"] ?? player["blitz"];
-      }
-      if (field === "rating_rpd" && (val === undefined || val === null)) {
-        val = player["rating_rapid"] ?? player["rapid"];
-      }
+    // 2. Ordenação (Do maior rating para o menor)
+    // Usamos a função getRating que você já possui para garantir a compatibilidade
+    let sorted = [...players].sort((a, b) => {
+      return (getRating(b, ratingKey) || 0) - (getRating(a, ratingKey) || 0);
+    });
 
-      return val !== undefined && val !== null ? Number(val) : 0;
-    };
-
-    // 1. Ordenação segura do Maior para o Menor (b - a)
-    if (viewMode === "top10_rapid") {
-      result.sort((a, b) => getRating(b, "rating_rpd") - getRating(a, "rating_rpd"));
-    } else if (viewMode === "top10_blitz") {
-      result.sort((a, b) => getRating(b, "rating_blz") - getRating(a, "rating_blz"));
-    } else {
-      result.sort((a, b) => getRating(b, "rating_std") - getRating(a, "rating_std"));
-    }
-
-    // 2. Criação do Rank real absoluto pós-ordenação
-    let rankedResult = result.map((player, index) => ({
-      ...player,
-      actualRank: index + 1
-    }));
-
-    // 3. Filtro de pesquisa por nome (Protegido contra campos nulos)
-    if (search.trim() !== "") {
-      rankedResult = rankedResult.filter(p =>
+    // 3. Aplica o filtro de busca (se houver texto na busca)
+    if (search && search.trim() !== "") {
+      sorted = sorted.filter(p => 
         p.name && p.name.toLowerCase().includes(search.toLowerCase())
       );
     }
 
-    // 4. Corte do Top 10 se não for a aba "Todos"
-    if (viewMode !== "all") {
-      rankedResult = rankedResult.slice(0, 10);
-    }
+    // 4. Gera o Ranking absoluto (da posição 1 até a última)
+    return sorted.map((player, index) => ({
+      ...player,
+      actualRank: index + 1 // O ranking aqui será 1, 2, 3... até o último jogador
+    }));
 
-    return rankedResult;
   }, [players, viewMode, search]);
 
   // Função auxiliar para renderizar o pódio com elegância

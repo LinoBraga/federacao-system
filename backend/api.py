@@ -162,36 +162,38 @@ def import_fpbx_status():
 def home():
     return {"message": "API da Federação Paraibana de Xadrez online!"}
 
-@app.get("/ranking", tags=["Consulta Pública"])
-def get_ranking(db: Session = Depends(get_db)):
+@app.get("/ranking/{ritmo}", tags=["Consulta Pública"])
+def get_ranking(ritmo: str, db: Session = Depends(get_db)):
+    # Mapeamento para garantir segurança (evita SQL Injection)
+    colunas = {
+        "ranking_std": "rating_std",
+        "ranking_rapid": "rating_rpd",
+        "ranking_blitz": "rating_blz"
+    }
+    
+    coluna_selecionada = colunas.get(ritmo)
+    if not coluna_selecionada:
+        raise HTTPException(status_code=400, detail="Ritmo inválido")
+
     try:
-        query = text("""
+        # A query agora é dinâmica com base no ritmo escolhido
+        query = text(f"""
             SELECT id, nome, clube, rating_std, rating_rpd, rating_blz 
             FROM players 
-            ORDER BY rating_std DESC
+            ORDER BY {coluna_selecionada} DESC
         """)
+        
         result = db.execute(query).fetchall()
         
         players_list = []
         for row in result:
-            # Captura os valores brutos do banco de dados
-            r_std = row[3]
-            r_rpd = row[4]
-            r_blz = row[5]
-
             players_list.append({
                 "id": row[0],
                 "name": row[1],
                 "clube": row[2] if row[2] else "Sem Clube",
-                
-                # Standard: Se nulo ou 0, assume 1800
-                "rating_std": int(r_std) if (r_std is not None and int(r_std) > 0) else 1800,
-                
-                # Rápido: Se nulo ou 0, assume 1800
-                "rating_rpd": int(r_rpd) if (r_rpd is not None and int(r_rpd) > 0) else 1800,
-                
-                # Blitz (ATUALIZADO): Se tiver valor real, mostra. Se for nulo ou 0, assume 1800 também!
-                "rating_blz": int(r_blz) if (r_blz is not None and int(r_blz) > 0) else 1800 
+                "rating_std": int(row[3] or 1800),
+                "rating_rpd": int(row[4] or 1800),
+                "rating_blz": int(row[5] or 1800)
             })
         return players_list
     except Exception as e:
