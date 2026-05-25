@@ -9,10 +9,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 from fastapi.responses import StreamingResponse
 from bs4 import BeautifulSoup
+from difflib import SequenceMatcher
+from fastapi import UploadFile, File, Depends, HTTPException
 import re
 import unicodedata
 from collections import defaultdict
 from difflib import SequenceMatcher
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+
+router = APIRouter()
 
 # Ferramentas do banco:
 from sqlalchemy import create_engine, Column, Integer, String, text
@@ -318,146 +324,110 @@ def normalizar(nome: str):
     return " ".join(nome.split())
 
 
-# ----------------------------
-# SIMILARIDADE INTELIGENTE
-# ----------------------------
+# =========================
+# MATCH FUZZY
+# =========================
 def similarity(a, b):
     return SequenceMatcher(None, a, b).ratio()
 
 
-# ----------------------------
-# MATCH HÍBRIDO (FORTE)
-# ----------------------------
 def match_player(nome, mapa):
     best = None
-    best_score = 0
+    best_score = 0.82  # mais rígido pra evitar erro
 
-    tokens_nome = set(nome.split())
-
-    for key, players in mapa.items():
-        tokens_key = set(key.split())
-
-        # score híbrido:
-        # 1. overlap de palavras
-        overlap = len(tokens_nome & tokens_key)
-
-        # 2. similaridade global
-        sim = similarity(nome, key)
-
-        score = overlap * 2 + sim  # peso maior para palavras iguais
-
+    for key, player in mapa.items():
+        score = similarity(nome, key)
         if score > best_score:
             best_score = score
-            best = players[0]
+            best = player
 
-    # threshold seguro
-    if best_score >= 2.5:
-        return best
-
-    return None
+    return best
 
 
-# ----------------------------
-# IMPORTAÇÃO ROBUSTA
-# ----------------------------
-@app.post("/admin/import-tournament", tags=["Administração"])
-def import_tournament(payload: TournamentImportRequest, db: Session = Depends(get_db), token: str = Depends(verify_admin_token)):
+# =========================
+# IMPORTADOR EXCEL
+# =========================
+@app.post("/admin/import-excel")
+def import_excel(
+    file: UploadFile = File(...),
+    tipo: str = "std",
+    db: Session = Depends(get_db),
+    token: str = Depends(verify_admin_token)
+):
 
-    r = requests.get(payload.url, headers={"User-Agent": "Mozilla/5.0"})
-    if r.status_code != 200:
-        raise HTTPException(status_code=400, detail="Erro ao acessar o torneio")
+    # -------------------------
+    # 1. LER ARQUIVO
+    # -------------------------
+    if file.filename.endswith(".csv"):
+        df = pd.read_csv(file.file)
+    else:
+        df = pd.read_excel(file.file)
 
-    soup = BeautifulSoup(r.text, "html.parser")
+    df.columns = [c.strip().lower() for c in df.columns]
 
-    tipo = payload.tipo.lower().strip()
-    coluna = "rating_blz" if tipo == "blitz" else ("rating_rpd" if tipo == "rapid" else "rating_std")
+    # -------------------------
+    # 2. DETECTAR COLUNAS
+    # -------------------------
+    def find_col(possiveis):
+        for p in possiveis:
+            for c in df.columns:
+                if p in c:
+                    return c
+        return None
 
-    # pega tabela correta
-    tabelas = [t for t in soup.find_all("table") if t.find_all("tr")]
-    tabela = max(tabelas, key=lambda t: len(t.find_all("tr")))
-    linhas = tabela.find_all("tr")
+    col_nome = find_col(["nome", "player", "name"])
+    col_var = find_col(["rtg", "+/-", "var", "variacao", "rating change"])
 
-    # ----------------------------
-    # detectar cabeçalho
-    # ----------------------------
-    idx_nome = idx_var = start = None
+    if not col_nome or not col_var:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Colunas não encontradas. Detectado: {list(df.columns)}"
+        )
 
-    for i, tr in enumerate(linhas):
-        cols = [c.get_text(strip=True).lower() for c in tr.find_all(["td", "th"])]
-
-        for j, c in enumerate(cols):
-            if "nome" in c or "name" in c:
-                idx_nome = j
-            if "rtg" in c or "+/-" in c:
-                idx_var = j
-
-        if idx_nome is not None and idx_var is not None:
-            start = i + 1
-            break
-
-    if start is None:
-        raise HTTPException(status_code=400, detail="Cabeçalho não encontrado")
-
-    # ----------------------------
-    # mapa do banco
-    # ----------------------------
+    # -------------------------
+    # 3. MAPA DB
+    # -------------------------
     players = db.query(PlayerModel).all()
-    mapa = defaultdict(list)
+    mapa = {normalizar(p.nome): p for p in players}
 
-    for p in players:
-        mapa[normalizar(p.nome)].append(p)
+    coluna_db = (
+        "rating_blz" if tipo == "blitz"
+        else "rating_rpd" if tipo == "rapid"
+        else "rating_std"
+    )
 
     updated = 0
     ignored = 0
 
-    # ----------------------------
-    # processa linhas reais
-    # ----------------------------
-    for tr in linhas[start:]:
-        cols = tr.find_all("td")
+    # -------------------------
+    # 4. PROCESSAR LINHAS
+    # -------------------------
+    for _, row in df.iterrows():
 
-        # filtro forte de lixo
-        if len(cols) < max(idx_nome, idx_var) + 1:
-            continue
+        nome_raw = str(row[col_nome])
+        var_raw = str(row[col_var]).replace(",", ".")
 
         try:
-            nome_raw = cols[idx_nome].get_text(strip=True)
-            var_raw = cols[idx_var].get_text(strip=True).replace(",", ".")
+            variacao = float(re.sub(r"[^0-9\.-]", "", var_raw))
+        except:
+            continue
 
-            if not nome_raw or not var_raw:
-                continue
+        nome_norm = normalizar(nome_raw)
 
-            variacao = float(var_raw)
+        player = mapa.get(nome_norm)
 
-            # formato chess-results
-            if "," in nome_raw:
-                a, b = nome_raw.split(",", 1)
-                nome = f"{b.strip()} {a.strip()}"
-            else:
-                nome = nome_raw
-
-            # remove lixo comum
-            nome = re.sub(r"\b(GM|IM|FM|CM|WGM|WIM|WFM|WCM|NM|AIM)\b", "", nome).strip()
-
-            nome_norm = normalizar(nome)
-
+        if not player:
             player = match_player(nome_norm, mapa)
 
-            if player:
-                atual = getattr(player, coluna) or 1000
-                novo = round(atual + variacao)
-                setattr(player, coluna, novo)
-
-                updated += 1
-                print(f"OK: {player.nome} {atual}->{novo}")
-
-            else:
-                ignored += 1
-                print(f"MISS: {nome_norm}")
-
-        except Exception as e:
-            print(f"ERRO: {e}")
+        if not player:
+            ignored += 1
             continue
+
+        atual = getattr(player, coluna_db) or 1000
+        novo = round(atual + variacao)
+
+        setattr(player, coluna_db, novo)
+        updated += 1
 
     db.commit()
 
@@ -465,5 +435,5 @@ def import_tournament(payload: TournamentImportRequest, db: Session = Depends(ge
         "status": "Sucesso",
         "atualizados": updated,
         "ignorados": ignored,
-        "total_db": len(players)
+        "total_linhas": len(df)
     }
