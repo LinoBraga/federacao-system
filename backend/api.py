@@ -312,10 +312,10 @@ def import_tournament(
 
 # Dentro da função import_tournament:
     if payload.url in TORNEIOS_PROCESSADOS:
-        raise HTTPException(status_code=400, detail="Este torneio já foi processado anteriormente!")
-
-# ... após terminar o loop com sucesso:
-    TORNEIOS_PROCESSADOS.add(payload.url)
+        raise HTTPException(
+        status_code=400,
+        detail="Este torneio já foi processado anteriormente!"
+    )
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
 
@@ -366,30 +366,45 @@ def import_tournament(
         linhas = tabela.find_all("tr")
 
         # ==========================================
-        # IDENTIFICA AS COLUNAS
-        # ==========================================
-
-        cabecalho = [
-            th.get_text(strip=True).lower()
-            for th in linhas[0].find_all(["th", "td"])
-        ]
+# IDENTIFICA A LINHA DO CABEÇALHO
+# ==========================================
 
         indice_nome = None
         indice_variacao = None
+        linha_inicio_dados = None
 
-        for i, col in enumerate(cabecalho):
+        for idx, linha in enumerate(linhas):
 
-            if "nome" in col or "name" in col:
-                indice_nome = i
+            colunas_temp = [
+                td.get_text(strip=True).lower()
+                for td in linha.find_all("td")
+            ]
 
-            if "rtg+/-" in col:
-                indice_variacao = i
+            if not colunas_temp:
+                continue
+
+            for i, col in enumerate(colunas_temp):
+
+                if "nome" in col or "name" in col:
+                    indice_nome = i
+
+                if "rtg+/-" in col:
+                    indice_variacao = i
+
+            # se encontrou os dois, salva a linha do cabeçalho
+            if indice_nome is not None and indice_variacao is not None:
+                linha_inicio_dados = idx + 1
+                break
 
         if indice_nome is None or indice_variacao is None:
             raise HTTPException(
                 status_code=400,
                 detail="Não foi possível localizar Nome ou rtg+/-"
             )
+
+        print("ÍNDICE NOME:", indice_nome)
+        print("ÍNDICE VARIAÇÃO:", indice_variacao)
+        print("COMEÇO DOS DADOS:", linha_inicio_dados)
 
         # ==========================================
         # PROCESSAMENTO DAS LINHAS
@@ -398,7 +413,7 @@ def import_tournament(
         # ==========================================
         # PROCESSAMENTO DAS LINHAS (NOVA LÓGICA ROBUSTA)
         # ==========================================
-        for linha in linhas[1:]:
+        for linha in linhas[linha_inicio_dados:]:
 
             colunas = linha.find_all("td")
 
@@ -495,6 +510,7 @@ def import_tournament(
                     print(f"DEBUG: FALHOU DEFINITIVAMENTE -> {nome_final}")
 
         db.commit()
+        TORNEIOS_PROCESSADOS.add(payload.url)
 
         return {
             "status": "Sucesso",
