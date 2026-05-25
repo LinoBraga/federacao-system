@@ -381,29 +381,30 @@ def import_tournament(
                 if not nome_raw: continue
                 variacao = float(variacao_texto)
                 
-                # Limpeza e Normalização
+            # Limpeza e Normalização
                 partes = nome_raw.split(',')
                 nome_limpo = f"{partes[1].strip()} {partes[0].strip()}" if len(partes) > 1 else nome_raw
                 titulos = ["GM", "IM", "FM", "CM", "WGM", "WIM", "WFM", "WCM", "NM", "AFM", "AIM"]
                 nome_final = " ".join([p for p in nome_limpo.split() if p.upper() not in titulos])
                 
+                # Normalização antes do match
+                nome_normalizado = normalizar_nome(nome_final)
+                
                 # Match no banco
-                encontrado = mapa_jogadores.get(normalizar_nome(nome_final))
+                encontrado = mapa_jogadores.get(nome_normalizado)
                 
                 if encontrado:
                     rating_atual = getattr(encontrado, coluna_alvo) or 1000
                     setattr(encontrado, coluna_alvo, round(rating_atual + variacao))
                     jogadores_atualizados += 1
+                    print(f"DEBUG: Sucesso! Atualizado: {encontrado.nome}")
                 else:
-                    print(f"DEBUG: Não encontrado no banco: {nome_final}")
-                    
+                    # Log detalhado para você corrigir o banco de dados
+                    print(f"DEBUG: NOME NO TORNEIO (Normalizado): '{nome_normalizado}'")
+                    print(f"DEBUG: CHAVES DISPONÍVEIS NO BANCO (Exemplo): {list(mapa_jogadores.keys())[:5]}")
+
             except (IndexError, ValueError):
-                # Linha ignorada (não é jogador ou faltam dados)
                 continue
 
         db.commit()
         return {"status": "Sucesso", "message": f"{jogadores_atualizados} jogadores atualizados."}
-
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
