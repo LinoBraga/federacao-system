@@ -3,6 +3,8 @@ import csv
 import requests
 from io import StringIO
 from typing import List
+import pandas as pd
+from io import BytesIO
 from pydantic import BaseModel
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -349,91 +351,81 @@ def match_player(nome, mapa):
 # =========================
 @app.post("/admin/import-excel")
 def import_excel(
-    file: UploadFile = File(...),
+    file: UploadFile,
     tipo: str = "std",
     db: Session = Depends(get_db),
     token: str = Depends(verify_admin_token)
 ):
 
-    # -------------------------
-    # 1. LER ARQUIVO
-    # -------------------------
-    if file.filename.endswith(".csv"):
-        df = pd.read_csv(file.file)
-    else:
-        df = pd.read_excel(file.file)
+    try:
+        contents = file.file.read()
 
-    df.columns = [c.strip().lower() for c in df.columns]
-
-    # -------------------------
-    # 2. DETECTAR COLUNAS
-    # -------------------------
-    def find_col(possiveis):
-        for p in possiveis:
-            for c in df.columns:
-                if p in c:
-                    return c
-        return None
-
-    col_nome = find_col(["nome", "player", "name"])
-    col_var = find_col(["rtg", "+/-", "var", "variacao", "rating change"])
-
-    if not col_nome or not col_var:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Colunas não encontradas. Detectado: {list(df.columns)}"
+        # 🔥 FORÇA ENGINE CORRETA
+        df = pd.read_excel(
+            BytesIO(contents),
+            engine="openpyxl"
         )
 
-    # -------------------------
-    # 3. MAPA DB
-    # -------------------------
-    players = db.query(PlayerModel).all()
-    mapa = {normalizar(p.nome): p for p in players}
+        df.columns = [str(c).strip().lower() for c in df.columns]
 
-    coluna_db = (
-        "rating_blz" if tipo == "blitz"
-        else "rating_rpd" if tipo == "rapid"
-        else "rating_std"
-    )
+        def find_col(possiveis):
+            for p in possiveis:
+                for c in df.columns:
+                    if p in c:
+                        return c
+            return None
 
-    updated = 0
-    ignored = 0
+        col_nome = find_col(["nome", "name", "player"])
+        col_var = find_col(["rtg", "+/-", "variacao", "var"])
 
-    # -------------------------
-    # 4. PROCESSAR LINHAS
-    # -------------------------
-    for _, row in df.iterrows():
+        if not col_nome or not col_var:
+            return {
+                "error": "colunas não encontradas",
+                "cols": list(df.columns)
+            }
 
-        nome_raw = str(row[col_nome])
-        var_raw = str(row[col_var]).replace(",", ".")
+        players = db.query(PlayerModel).all()
+        mapa = {normalizar(p.nome): p for p in players}
 
-        try:
-            variacao = float(re.sub(r"[^0-9\.-]", "", var_raw))
-        except:
-            continue
+        coluna_db = (
+            "rating_blz" if tipo == "blitz"
+            else "rating_rpd" if tipo == "rapid"
+            else "rating_std"
+        )
 
-        nome_norm = normalizar(nome_raw)
+        updated = 0
+        ignored = 0
 
-        player = mapa.get(nome_norm)
+        for _, row in df.iterrows():
+            nome = str(row[col_nome])
+            var = str(row[col_var]).replace(",", ".")
 
-        if not player:
-            player = match_player(nome_norm, mapa)
+            try:
+                variacao = float(re.sub(r"[^0-9\.-]", "", var))
+            except:
+                continue
 
-        if not player:
-            ignored += 1
-            continue
+            nome_norm = normalizar(nome)
 
-        atual = getattr(player, coluna_db) or 1000
-        novo = round(atual + variacao)
+            player = mapa.get(nome_norm)
 
-        setattr(player, coluna_db, novo)
-        updated += 1
+            if not player:
+                ignored += 1
+                continue
 
-    db.commit()
+            atual = getattr(player, coluna_db) or 1000
+            setattr(player, coluna_db, round(atual + variacao))
+            updated += 1
 
-    return {
-        "status": "Sucesso",
-        "atualizados": updated,
-        "ignorados": ignored,
-        "total_linhas": len(df)
-    }
+        db.commit()
+
+        return {
+            "status": "Sucesso",
+            "atualizados": updated,
+            "ignorados": ignored,
+            "linhas_excel": len(df)
+        }
+
+    except Exception as e:
+        db.rollback()
+        return {"error": str(e)}
