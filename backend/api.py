@@ -302,168 +302,155 @@ def update_ratings(
 
 # 🚀 ROTA DE IMPORTAÇÃO AUTOMÁTICA VIA LINK DO CHESS-RESULTS
 TORNEIOS_PROCESSADOS = set()
-def normalizar_nome(nome: str):
-    import unicodedata
-    import re
+def normalizar(nome: str):
+    import unicodedata, re
 
     nome = unicodedata.normalize("NFKD", nome)
     nome = nome.encode("ASCII", "ignore").decode("utf-8")
     nome = nome.lower()
-    nome = re.sub(r"[^a-z\s]", "", nome)
+    nome = re.sub(r"[^a-z\s]", " ", nome)
 
-    ignorar = {"de", "da", "do", "dos", "das"}
+    stop = {"de", "da", "do", "dos", "das"}
+    tokens = [t for t in nome.split() if t not in stop]
 
-    partes = [p for p in nome.split() if p not in ignorar]
-    return " ".join(partes)
+    return " ".join(tokens).strip()
 
+def match_player(nome_norm, mapa):
 
-def match_player(nome_norm: str, mapa: dict):
-    """
-    Fuzzy simples e seguro:
-    - conta tokens em comum
-    - evita erro de nome invertido (Souza Arthur vs Arthur Souza)
-    """
+    tokens = set(nome_norm.split())
 
-    tokens_a = set(nome_norm.split())
-
-    melhor = None
-    melhor_score = 0
+    best = None
+    best_score = -1
 
     for key, player in mapa.items():
-        tokens_b = set(key.split())
+        key_tokens = set(key.split())
 
-        score = len(tokens_a & tokens_b)
+        inter = tokens & key_tokens
+        score = len(inter)
 
-        # bônus: se sobrenome bate, melhora muito precisão
-        if len(tokens_a) > 0 and len(tokens_b) > 0:
-            if list(tokens_a)[-1] in tokens_b:
+        # bônus forte (evita erro de ordem tipo Souza Arthur vs Arthur Souza)
+        if tokens and key_tokens:
+            if tokens.pop() in key_tokens:
                 score += 1
 
-        if score > melhor_score:
-            melhor_score = score
-            melhor = player
+        if score > best_score:
+            best_score = score
+            best = player
 
-    # evita falso positivo
-    if melhor_score >= 2:
-        return melhor
+    return best if best_score >= 2 else None
+@app.post("/admin/import-tournament", tags=["Admin"])
+def import_tournament(payload, db: Session = Depends(get_db)):
 
-    return None
+    import requests
+    from bs4 import BeautifulSoup
 
-@app.post("/admin/import-tournament", tags=["Administração (Requer Token)"])
-def import_tournament(
-    payload: TournamentImportRequest,
-    db: Session = Depends(get_db),
-    token: str = Depends(verify_admin_token)
-):
-    try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-        r = requests.get(payload.url, headers=headers)
+    r = requests.get(payload.url, headers={"User-Agent": "Mozilla/5.0"})
+    if r.status_code != 200:
+        raise HTTPException(400, "Erro ao acessar torneio")
 
-        if r.status_code != 200:
-            raise HTTPException(status_code=400, detail="Erro ao acessar Chess-Results")
+    soup = BeautifulSoup(r.text, "html.parser")
 
-        soup = BeautifulSoup(r.text, "html.parser")
+    tipo = payload.tipo.lower()
+    coluna = (
+        "rating_blz" if tipo == "blitz"
+        else "rating_rpd" if tipo == "rapid"
+        else "rating_std"
+    )
 
-        tipo = payload.tipo.lower().strip()
-        coluna = (
-            "rating_blz" if tipo == "blitz"
-            else "rating_rpd" if tipo == "rapid"
-            else "rating_std"
-        )
+    tabela = max(soup.find_all("table"), key=lambda t: len(t.find_all("tr")))
+    linhas = tabela.find_all("tr")
 
-        print(f"IMPORTANDO -> {coluna}")
+    # ======================
+    # detectar colunas
+    # ======================
+    idx_nome = None
+    idx_var = None
+    start = None
 
-        tabela = max(soup.find_all("table"), key=lambda t: len(t.find_all("tr")))
-        linhas = tabela.find_all("tr")
+    for i, tr in enumerate(linhas):
+        cols = [c.get_text(strip=True).lower() for c in tr.find_all(["td","th"])]
 
-        # =========================
-        # detectar colunas
-        # =========================
-        idx_nome = None
-        idx_var = None
-        inicio = None
+        for j, c in enumerate(cols):
+            if "nome" in c:
+                idx_nome = j
+            if "rtg" in c:
+                idx_var = j
 
-        for i, linha in enumerate(linhas):
-            cols = [c.get_text(strip=True).lower() for c in linha.find_all(["td", "th"])]
+        if idx_nome is not None and idx_var is not None:
+            start = i + 1
+            break
 
-            for j, col in enumerate(cols):
-                if "nome" in col:
-                    idx_nome = j
-                if "rtg" in col:
-                    idx_var = j
+    if start is None:
+        raise HTTPException(400, "Tabela inválida")
 
-            if idx_nome is not None and idx_var is not None:
-                inicio = i + 1
-                break
+    # ======================
+    # banco
+    # ======================
+    players = db.query(PlayerModel).all()
 
-        if inicio is None:
-            raise HTTPException(status_code=400, detail="Cabeçalho não encontrado")
+    mapa = {}
+    for p in players:
+        k = normalizar(p.nome)
+        mapa[k] = p
 
-        # =========================
-        # cache banco
-        # =========================
-        players = db.query(PlayerModel).all()
-        mapa = {normalizar_nome(p.nome): p for p in players}
+    updated = 0
 
-        atualizados = 0
+    # ======================
+    # processar
+    # ======================
+    for tr in linhas[start:]:
+        cols = tr.find_all("td")
 
-        # =========================
-        # processar jogadores
-        # =========================
-        for linha in linhas[inicio:]:
-            cols = linha.find_all("td")
+        if len(cols) <= max(idx_nome, idx_var):
+            continue
 
-            if len(cols) <= max(idx_nome, idx_var):
+        try:
+            nome_raw = cols[idx_nome].get_text(strip=True)
+            var_raw = cols[idx_var].get_text(strip=True).replace(",", ".")
+
+            if not nome_raw or not var_raw:
                 continue
 
-            try:
-                nome_raw = cols[idx_nome].get_text(strip=True)
-                var_raw = cols[idx_var].get_text(strip=True).replace(",", ".")
+            variacao = float(var_raw)
 
-                if not nome_raw or not var_raw:
-                    continue
+            # chess-results format
+            if "," in nome_raw:
+                a, b = nome_raw.split(",", 1)
+                nome = f"{b.strip()} {a.strip()}"
+            else:
+                nome = nome_raw
 
-                variacao = float(var_raw)
+            nome = " ".join(nome.split())
 
-                # Chess-Results: "Sobrenome, Nome"
-                if "," in nome_raw:
-                    a, b = nome_raw.split(",", 1)
-                    nome = f"{b.strip()} {a.strip()}"
-                else:
-                    nome = nome_raw
+            nome = " ".join([
+                x for x in nome.split()
+                if x.upper() not in ["GM","IM","FM","CM","WGM","WIM","WFM","WCM","NM","AFM","AIM"]
+            ])
 
-                # remove títulos
-                titulos = {"GM","IM","FM","CM","WGM","WIM","WFM","WCM","NM","AFM","AIM"}
-                nome_final = " ".join([p for p in nome.split() if p.upper() not in titulos])
+            key = normalizar(nome)
 
-                key = normalizar_nome(nome_final)
+            player = match_player(key, mapa)
 
-                jogador = match_player(key, mapa)
+            if player:
+                atual = getattr(player, coluna) or 1000
+                novo = round(atual + variacao)
 
-                if jogador:
-                    atual = getattr(jogador, coluna) or 1000
-                    novo = round(atual + variacao)
+                setattr(player, coluna, novo)
+                updated += 1
 
-                    setattr(jogador, coluna, novo)
-                    atualizados += 1
+                print(f"OK: {player.nome} {atual} -> {novo}")
 
-                    print(f"DEBUG: {jogador.nome} {atual} -> {novo}")
+            else:
+                print(f"MISS: {nome}")
 
-                else:
-                    print(f"DEBUG: NÃO ENCONTRADO -> {nome_final}")
+        except Exception as e:
+            print("ERRO:", e)
+            continue
 
-            except Exception as e:
-                print(f"ERRO LINHA: {e}")
-                continue
+    db.commit()
 
-        db.commit()
-
-        return {
-            "status": "Sucesso",
-            "message": f"{atualizados} jogadores atualizados",
-            "tipo": coluna
-        }
-
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "status": "OK",
+        "updated": updated,
+        "total_db": len(players)
+    }
