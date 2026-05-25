@@ -393,13 +393,11 @@ def import_tournament(
             raise HTTPException(status_code=400, detail="Cabeçalho não encontrado.")
 
         # Agora o resto do seu código...
-        for linha in linhas[linha_inicio_dados:]:
             # ... processamento ...
 
         # ==========================================
         # PROCESSAMENTO DAS LINHAS
         # ==========================================
-
         # ==========================================
         # PROCESSAMENTO DAS LINHAS (NOVA LÓGICA ROBUSTA)
         # ==========================================
