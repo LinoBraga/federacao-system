@@ -372,30 +372,32 @@ def import_tournament(
         # 5. Processamento seguro de linhas
         # 5. Processamento seguro de linhas
         # 5. Processamento seguro de linhas
-        for linha in linhas[linha_inicio_dados:]:
+       # 5. Processamento das linhas
+        for idx, linha in enumerate(linhas[linha_inicio_dados:]):
             colunas = linha.find_all("td")
             
-            # Garantia mínima de colunas
+            # Diagnóstico crítico: quantas colunas essa linha tem?
             if len(colunas) <= max(indice_nome, indice_variacao):
+                # Se for uma linha de menu ou rodapé, apenas pule
                 continue
 
             try:
-                # Extração bruta
+                # Extração
                 nome_raw = colunas[indice_nome].get_text(strip=True)
-                variacao_texto = colunas[indice_variacao].get_text(strip=True).replace(",", ".")
+                variacao_raw = colunas[indice_variacao].get_text(strip=True).replace(",", ".")
                 
-                if not nome_raw or not variacao_texto:
+                if not nome_raw or not variacao_raw:
                     continue
+
+                variacao = float(variacao_raw)
                 
-                variacao = float(variacao_texto)
-                
-                # Processamento do nome (Agora garantimos a criação de nome_final)
+                # Limpeza do nome
                 partes = nome_raw.split(',')
                 nome_limpo = f"{partes[1].strip()} {partes[0].strip()}" if len(partes) > 1 else nome_raw
                 titulos = ["GM", "IM", "FM", "CM", "WGM", "WIM", "WFM", "WCM", "NM", "AFM", "AIM"]
                 nome_final = " ".join([p for p in nome_limpo.split() if p.upper() not in titulos])
                 
-                # Match no banco
+                # Match
                 nome_normalizado = normalizar_nome(nome_final)
                 encontrado = mapa_jogadores.get(nome_normalizado)
                 
@@ -403,13 +405,13 @@ def import_tournament(
                     rating_atual = getattr(encontrado, coluna_alvo) or 1000
                     setattr(encontrado, coluna_alvo, round(rating_atual + variacao))
                     jogadores_atualizados += 1
-                    print(f"DEBUG: Sucesso! Atualizado: {encontrado.nome}")
+                    print(f"DEBUG: Sucesso! {encontrado.nome} ({rating_atual} -> {rating_atual + variacao})")
                 else:
-                    print(f"DEBUG: NOME NÃO ENCONTRADO NO BANCO: '{nome_final}'")
+                    print(f"DEBUG: Jogador não encontrado: '{nome_final}' (Normalizado: '{nome_normalizado}')")
                     
             except Exception as e:
-                # O log agora não vai quebrar, pois 'nome_final' não é acessado aqui
-                print(f"DEBUG: Linha ignorada - Erro na extração: {e}")
+                # Isso vai capturar se houve erro na conversão de rating ou índice
+                print(f"DEBUG: Erro inesperado na linha {idx}: {e}")
                 continue
                 
             # Limpeza e Normalização
