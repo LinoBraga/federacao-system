@@ -457,7 +457,8 @@ def import_tournament(
             colunas = linha.find_all("td")
 
             print("TOTAL COLUNAS:", len(colunas))
-
+            if len(colunas) < 20:
+                continue
             textos = [
                 c.get_text(strip=True)
                 for c in colunas
