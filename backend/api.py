@@ -321,10 +321,26 @@ def normalizar_nome(nome):
     ]
 
     return " ".join(partes)
-def match_player(key, mapa):
+def match_player(nome, mapa):
+    nome_tokens = set(nome.split())
+
+    melhor_match = None
+    melhor_score = 0
+
     for k, v in mapa.items():
-        if k.split()[-1] == key.split()[-1]:
-            return v
+        k_tokens = set(k.split())
+
+        # quantos termos batem?
+        score = len(nome_tokens & k_tokens)
+
+        if score > melhor_score:
+            melhor_score = score
+            melhor_match = v
+
+    # exige pelo menos 2 palavras em comum pra evitar erro
+    if melhor_score >= 2:
+        return melhor_match
+
     return None
 
 @app.post("/admin/import-tournament", tags=["Administração (Requer Token)"])
