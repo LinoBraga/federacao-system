@@ -371,26 +371,31 @@ def import_tournament(
 
         # 5. Processamento seguro de linhas
         # 5. Processamento seguro de linhas
+        # 5. Processamento seguro de linhas
         for linha in linhas[linha_inicio_dados:]:
             colunas = linha.find_all("td")
             
-            # DIAGNÓSTICO: Se a linha for muito curta, o índice vai falhar
+            # Garantia mínima de colunas
             if len(colunas) <= max(indice_nome, indice_variacao):
-                # Isso vai nos dizer se a linha está sendo ignorada por ser curta demais
-                # print(f"DEBUG: Linha ignorada (muito curta). Colunas encontradas: {len(colunas)}")
                 continue
 
             try:
+                # Extração bruta
                 nome_raw = colunas[indice_nome].get_text(strip=True)
                 variacao_texto = colunas[indice_variacao].get_text(strip=True).replace(",", ".")
                 
-                # Se o nome estiver vazio, pula (linha de separação)
-                if not nome_raw: continue
+                if not nome_raw or not variacao_texto:
+                    continue
                 
                 variacao = float(variacao_texto)
                 
-                # ... (resto da lógica de limpeza de nome)
+                # Processamento do nome (Agora garantimos a criação de nome_final)
+                partes = nome_raw.split(',')
+                nome_limpo = f"{partes[1].strip()} {partes[0].strip()}" if len(partes) > 1 else nome_raw
+                titulos = ["GM", "IM", "FM", "CM", "WGM", "WIM", "WFM", "WCM", "NM", "AFM", "AIM"]
+                nome_final = " ".join([p for p in nome_limpo.split() if p.upper() not in titulos])
                 
+                # Match no banco
                 nome_normalizado = normalizar_nome(nome_final)
                 encontrado = mapa_jogadores.get(nome_normalizado)
                 
@@ -403,7 +408,8 @@ def import_tournament(
                     print(f"DEBUG: NOME NÃO ENCONTRADO NO BANCO: '{nome_final}'")
                     
             except Exception as e:
-                print(f"DEBUG: Erro ao processar linha: {e}")
+                # O log agora não vai quebrar, pois 'nome_final' não é acessado aqui
+                print(f"DEBUG: Linha ignorada - Erro na extração: {e}")
                 continue
                 
             # Limpeza e Normalização
