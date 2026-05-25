@@ -374,12 +374,38 @@ def import_tournament(
             colunas = linha.find_all("td")
             
             try:
-                # Tenta acessar as colunas, se não existirem (IndexError), o except pula a linha
+                # Tenta extrair os dados
                 nome_raw = colunas[indice_nome].get_text(strip=True)
                 variacao_texto = colunas[indice_variacao].get_text(strip=True).replace(",", ".")
                 
                 if not nome_raw: continue
                 variacao = float(variacao_texto)
+                
+                # Limpeza e Normalização
+                partes = nome_raw.split(',')
+                nome_limpo = f"{partes[1].strip()} {partes[0].strip()}" if len(partes) > 1 else nome_raw
+                titulos = ["GM", "IM", "FM", "CM", "WGM", "WIM", "WFM", "WCM", "NM", "AFM", "AIM"]
+                nome_final = " ".join([p for p in nome_limpo.split() if p.upper() not in titulos])
+                
+                # Normalização
+                nome_normalizado = normalizar_nome(nome_final)
+                
+                # BUSCA NO MAPA
+                encontrado = mapa_jogadores.get(nome_normalizado)
+                
+                if encontrado:
+                    rating_atual = getattr(encontrado, coluna_alvo) or 1000
+                    setattr(encontrado, coluna_alvo, round(rating_atual + variacao))
+                    jogadores_atualizados += 1
+                    print(f"DEBUG: Sucesso! Atualizado: {encontrado.nome}")
+                else:
+                    # ESSE LOG É O QUE VAI NOS DAR A RESPOSTA
+                    print(f"DEBUG: NOME NÃO ENCONTRADO NO BANCO: '{nome_final}' (Normalizado: '{nome_normalizado}')")
+                    
+            except Exception as e:
+                # Isso vai nos mostrar se alguma linha está dando erro inesperado
+                # print(f"DEBUG: Linha ignorada por erro: {e}")
+                continue
                 
             # Limpeza e Normalização
                 partes = nome_raw.split(',')
