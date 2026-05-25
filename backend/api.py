@@ -350,68 +350,46 @@ def import_tournament(
         indice_variacao = None
         linha_inicio_dados = None
 
-        for idx, linha in enumerate(linhas):
-            colunas_temp = [td.get_text(strip=True).lower() for td in linha.find_all(["td", "th"])]
-            for i, col in enumerate(colunas_temp):
-                if "nome" in col or "name" in col: indice_nome = i
-                if "rtg+/-" in col: indice_variacao = i
-            
-            if indice_nome is not None and indice_variacao is not None:
-                linha_inicio_dados = idx + 1
-                break
-
-        if linha_inicio_dados is None:
-            raise HTTPException(status_code=400, detail="Cabeçalho 'Nome' ou 'rtg+/-' não encontrado.")
-
-        # 4. Carrega banco uma única vez para performance
-        todos_jogadores = db.query(PlayerModel).all()
-        mapa_jogadores = {normalizar_nome(p.nome): p for p in todos_jogadores}
-        
-        jogadores_atualizados = 0
-
-        # 5. Processamento seguro de linhas
-        # 5. Processamento seguro de linhas
-        # 5. Processamento seguro de linhas
-       # 5. Processamento das linhas
         for idx, linha in enumerate(linhas[linha_inicio_dados:]):
             colunas = linha.find_all("td")
-            
-            # Diagnóstico crítico: quantas colunas essa linha tem?
+
             if len(colunas) <= max(indice_nome, indice_variacao):
-                # Se for uma linha de menu ou rodapé, apenas pule
                 continue
 
             try:
-                # Extração
                 nome_raw = colunas[indice_nome].get_text(strip=True)
                 variacao_raw = colunas[indice_variacao].get_text(strip=True).replace(",", ".")
-                
+
                 if not nome_raw or not variacao_raw:
                     continue
 
                 variacao = float(variacao_raw)
-                
-                # Limpeza do nome
+
+                # limpeza nome
                 partes = nome_raw.split(',')
                 nome_limpo = f"{partes[1].strip()} {partes[0].strip()}" if len(partes) > 1 else nome_raw
-                titulos = ["GM", "IM", "FM", "CM", "WGM", "WIM", "WFM", "WCM", "NM", "AFM", "AIM"]
+
+                titulos = ["GM","IM","FM","CM","WGM","WIM","WFM","WCM","NM","AFM","AIM"]
                 nome_final = " ".join([p for p in nome_limpo.split() if p.upper() not in titulos])
-                
-                # Match
+
                 nome_normalizado = normalizar_nome(nome_final)
+
                 encontrado = mapa_jogadores.get(nome_normalizado)
-                
+
                 if encontrado:
                     rating_atual = getattr(encontrado, coluna_alvo) or 1000
-                    setattr(encontrado, coluna_alvo, round(rating_atual + variacao))
+                    novo_rating = round(rating_atual + variacao)
+
+                    setattr(encontrado, coluna_alvo, novo_rating)
+
                     jogadores_atualizados += 1
-                    print(f"DEBUG: Sucesso! {encontrado.nome} ({rating_atual} -> {rating_atual + variacao})")
+                    print(f"DEBUG: Sucesso! {encontrado.nome} ({rating_atual} -> {novo_rating})")
+
                 else:
-                    print(f"DEBUG: Jogador não encontrado: '{nome_final}' (Normalizado: '{nome_normalizado}')")
-                    
+                    print(f"DEBUG: NÃO ENCONTRADO -> {nome_final} | {nome_normalizado}")
+
             except Exception as e:
-                # Isso vai capturar se houve erro na conversão de rating ou índice
-                print(f"DEBUG: Erro inesperado na linha {idx}: {e}")
+                print(f"DEBUG: ERRO LINHA {idx}: {e}")
                 continue
                 
             # Limpeza e Normalização
