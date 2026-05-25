@@ -9,6 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 from fastapi.responses import StreamingResponse
 from bs4 import BeautifulSoup
+import re
+import unicodedata
 
 # Ferramentas do banco:
 from sqlalchemy import create_engine, Column, Integer, String, text
@@ -300,23 +302,40 @@ def update_ratings(
 
 # 🚀 ROTA DE IMPORTAÇÃO AUTOMÁTICA VIA LINK DO CHESS-RESULTS
 TORNEIOS_PROCESSADOS = set()
+def normalizar_nome(nome):
+
+    nome = unicodedata.normalize("NFKD", nome)
+    nome = nome.encode("ASCII", "ignore").decode("utf-8")
+
+    nome = nome.lower()
+
+    nome = re.sub(r"[^a-z\s]", "", nome)
+
+    ignorar = {
+        "de", "da", "do", "dos", "das"
+    }
+
+    partes = [
+        p for p in nome.split()
+        if p not in ignorar
+    ]
+
+    return " ".join(partes)
+
+
 @app.post("/admin/import-tournament", tags=["Administração (Requer Token)"])
 def import_tournament(
     payload: TournamentImportRequest,
     db: Session = Depends(get_db),
     token: str = Depends(verify_admin_token)
 ):
-    # Exemplo de trava simples
-# No topo do seu arquivo, crie uma lista global (atenção: reinicia no deploy)
 
-
-# Dentro da função import_tournament:
-    if payload.url in TORNEIOS_PROCESSADOS:
-        raise HTTPException(
-        status_code=400,
-        detail="Este torneio já foi processado anteriormente!"
-    )
     try:
+
+        # ==========================================
+        # CONFIGURAÇÃO INICIAL
+        # ==========================================
+
         headers = {"User-Agent": "Mozilla/5.0"}
 
         resposta = requests.get(payload.url, headers=headers)
@@ -324,14 +343,10 @@ def import_tournament(
         if resposta.status_code != 200:
             raise HTTPException(
                 status_code=400,
-                detail="Erro ao acessar o link do Chess-Results."
+                detail="Erro ao acessar o Chess-Results."
             )
 
         soup = BeautifulSoup(resposta.text, "html.parser")
-
-        # ==========================================
-        # DEFINIÇÃO SEGURA DO TIPO DE TORNEIO
-        # ==========================================
 
         tipo = payload.tipo.lower().strip()
 
@@ -347,8 +362,8 @@ def import_tournament(
         print(f"IMPORTANDO PARA -> {coluna_alvo}")
 
         # ==========================================
-# ENCONTRA A TABELA CERTA
-# ==========================================
+        # ENCONTRA A TABELA CORRETA
+        # ==========================================
 
         tabelas = soup.find_all("table")
 
@@ -358,151 +373,200 @@ def import_tournament(
                 detail="Nenhuma tabela encontrada."
             )
 
-        tabela = max(
-            tabelas,
-            key=lambda t: len(t.find_all("tr"))
-        )
+        tabela = None
+
+        for t in tabelas:
+
+            texto = t.get_text(" ", strip=True).lower()
+
+            if "rtg+/-" in texto and (
+                "nome" in texto or "name" in texto
+            ):
+                tabela = t
+                break
+
+        if tabela is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Tabela do torneio não encontrada."
+            )
 
         linhas = tabela.find_all("tr")
 
         # ==========================================
-# IDENTIFICA A LINHA DO CABEÇALHO
-# ==========================================
+        # IDENTIFICA CABEÇALHO
+        # ==========================================
 
-       # Inicialize aqui
-        jogadores_atualizados = 0 
         indice_nome = None
         indice_variacao = None
         linha_inicio_dados = None
 
         for idx, linha in enumerate(linhas):
-            # Adicione 'th' aqui, pois cabeçalhos no Chess-Results costumam ser <th>
-            colunas_temp = [td.get_text(strip=True).lower() for td in linha.find_all(["td", "th"])]
-            
+
+            colunas_temp = [
+                td.get_text(strip=True).lower()
+                for td in linha.find_all(["td", "th"])
+            ]
+
+            if not colunas_temp:
+                continue
+
             for i, col in enumerate(colunas_temp):
+
                 if "nome" in col or "name" in col:
                     indice_nome = i
+
                 if "rtg+/-" in col:
                     indice_variacao = i
 
-            if indice_nome is not None and indice_variacao is not None:
+            if (
+                indice_nome is not None
+                and indice_variacao is not None
+            ):
                 linha_inicio_dados = idx + 1
                 break
 
         if linha_inicio_dados is None:
-            raise HTTPException(status_code=400, detail="Cabeçalho não encontrado.")
+            raise HTTPException(
+                status_code=400,
+                detail="Cabeçalho não encontrado."
+            )
 
-        # Agora o resto do seu código...
-            # ... processamento ...
+        print("ÍNDICE NOME:", indice_nome)
+        print("ÍNDICE VARIAÇÃO:", indice_variacao)
 
         # ==========================================
-        # PROCESSAMENTO DAS LINHAS
+        # CARREGA JOGADORES DO BANCO
         # ==========================================
+
+        jogadores_atualizados = 0
+
+        todos_jogadores = db.query(PlayerModel).all()
+
+        mapa_jogadores = {
+            normalizar_nome(p.nome): p
+            for p in todos_jogadores
+        }
+
         # ==========================================
-        # PROCESSAMENTO DAS LINHAS (NOVA LÓGICA ROBUSTA)
+        # PROCESSA CADA LINHA
         # ==========================================
+
         for linha in linhas[linha_inicio_dados:]:
 
-            colunas = linha.find_all("td")
+            colunas = linha.find_all(["td", "th"])
 
-            if len(colunas) <= max(indice_nome, indice_variacao):
+            if (
+                indice_nome >= len(colunas)
+                or indice_variacao >= len(colunas)
+            ):
                 continue
 
-            nome_raw = colunas[indice_nome].get_text(strip=True)
+            nome_raw = (
+                colunas[indice_nome]
+                .get_text(strip=True)
+            )
 
             variacao_texto = (
                 colunas[indice_variacao]
                 .get_text(strip=True)
                 .replace(",", ".")
-            )  
+            )
 
             if not nome_raw or not variacao_texto:
                 continue
 
             try:
                 variacao = float(variacao_texto)
-            except:
+
+            except ValueError:
                 continue
 
-            # 3. CONVERTE "Sobrenome, Nome" para "Nome Sobrenome"
-            # Isso facilita o match com o seu banco de dados
-            partes = nome_raw.split(',')
-            nome_limpo = f"{partes[1].strip()} {partes[0].strip()}"
-            
-            # Limpa títulos do nome (GM, IM, etc)
-            titulos = ["GM", "IM", "FM", "CM", "WGM", "WIM", "WFM", "WCM", "NM", "AFM"]
-            nome_final = " ".join([p for p in nome_limpo.split() if p.upper() not in titulos])
-            
-            print(f"DEBUG: Processando -> {nome_final} | Variação: {variacao}")
-
-            # 4. UPDATE SEGURO NO BANCO
-            # (Aqui mantém a sua lógica de SQL que já estava funcionando)
-            # 4. LIMPEZA PROFUNDA DE SUFIXOS
-            # Remove sufixos que não fazem parte do nome civil
-            sufixos = [" ME ", " MEF ", " AFM ", " WNM ", " NM ", " WFM "]
-            nome_limpo_busca = f" {nome_final} "
-            for s in sufixos:
-                nome_limpo_busca = nome_limpo_busca.replace(s, " ")
-            
-            nome_limpo_busca = nome_limpo_busca.strip()
-            partes_busca = [p for p in nome_limpo_busca.lower().split() if len(p) > 2]
-            
-            if len(partes_busca) < 2: continue
-
-            # 5. UPDATE USANDO NOME LIMPO
-            # Buscamos pelo primeiro e último nome após remover o "ME"
             # ==========================================
-            # UPDATE "TEIMOSO" (Substitua tudo por isto)
+            # LIMPEZA DO NOME
             # ==========================================
-            
-            # Tenta a busca completa
-            stmt_completo = text(f"""
-                UPDATE players
-                SET {coluna_alvo} = CASE
-                    WHEN {coluna_alvo} IS NULL THEN 1000 + :variacao
-                    ELSE ROUND({coluna_alvo} + :variacao)
-                END
-                WHERE LOWER(nome) LIKE :primeiro_nome AND LOWER(nome) LIKE :ultimo_nome
-            """)
-            
-            resultado = db.execute(stmt_completo, {
-                "variacao": variacao,
-                "primeiro_nome": f"%{partes_busca[0]}%",
-                "ultimo_nome": f"%{partes_busca[-1]}%"
-            })
-            
-            if resultado.rowcount > 0:
-                jogadores_atualizados += 1
-                print(f"DEBUG: Sucesso! Atualizado: {nome_final}")
+
+            partes = nome_raw.split(",")
+
+            if len(partes) > 1:
+                nome_limpo = (
+                    f"{partes[1].strip()} "
+                    f"{partes[0].strip()}"
+                )
             else:
-                # Se falhou, tenta buscar APENAS PELO SOBRENOME PRINCIPAL
-                sobrenome_principal = partes_busca[-1]
-                stmt_teimoso = text(f"""
-                    UPDATE players
-                    SET {coluna_alvo} = CASE
-                        WHEN {coluna_alvo} IS NULL THEN 1000 + :variacao
-                        ELSE ROUND({coluna_alvo} + :variacao)
-                    END
-                    WHERE LOWER(nome) LIKE :busca
-                """)
-                
-                resultado_teimoso = db.execute(stmt_teimoso, {
-                    "variacao": variacao,
-                    "busca": f"%{sobrenome_principal}%"
-                })
-                
-                if resultado_teimoso.rowcount > 0:
-                    jogadores_atualizados += 1
-                    print(f"DEBUG: Sucesso (via sobrenome)! Atualizado: {nome_final}")
-                else:
-                    print(f"DEBUG: FALHOU DEFINITIVAMENTE -> {nome_final}")
+                nome_limpo = nome_raw
+
+            titulos = [
+                "GM", "IM", "FM", "CM",
+                "WGM", "WIM", "WFM",
+                "WCM", "NM", "AFM"
+            ]
+
+            nome_final = " ".join([
+                p for p in nome_limpo.split()
+                if p.upper() not in titulos
+            ])
+
+            nome_normalizado = normalizar_nome(nome_final)
+
+            print(
+                f"DEBUG: Processando -> "
+                f"{nome_final} | "
+                f"Variação: {variacao}"
+            )
+
+            # ==========================================
+            # MATCH NO BANCO
+            # ==========================================
+
+            encontrado = mapa_jogadores.get(
+                nome_normalizado
+            )
+
+            if encontrado:
+
+                rating_atual = (
+                    getattr(encontrado, coluna_alvo)
+                    or 1000
+                )
+
+                novo_rating = round(
+                    rating_atual + variacao
+                )
+
+                setattr(
+                    encontrado,
+                    coluna_alvo,
+                    novo_rating
+                )
+
+                jogadores_atualizados += 1
+
+                print(
+                    f"DEBUG: Sucesso! "
+                    f"{encontrado.nome} | "
+                    f"{rating_atual} -> {novo_rating}"
+                )
+
+            else:
+
+                print(
+                    f"DEBUG: JOGADOR NÃO ENCONTRADO -> "
+                    f"{nome_final}"
+                )
+
+        # ==========================================
+        # FINALIZA
+        # ==========================================
 
         db.commit()
-        TORNEIOS_PROCESSADOS.add(payload.url)
 
         return {
             "status": "Sucesso",
-            "message": f"{jogadores_atualizados} jogadores atualizados.",
+            "message": (
+                f"{jogadores_atualizados} "
+                f"jogadores atualizados."
+            ),
             "tipo": coluna_alvo
         }
 
