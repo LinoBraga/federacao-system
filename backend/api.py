@@ -321,7 +321,11 @@ def normalizar_nome(nome):
     ]
 
     return " ".join(partes)
-
+def match_player(key, mapa):
+    for k, v in mapa.items():
+        if k.split()[-1] == key.split()[-1]:
+            return v
+    return None
 
 @app.post("/admin/import-tournament", tags=["Administração (Requer Token)"])
 def import_tournament(
@@ -413,7 +417,7 @@ def import_tournament(
 
                 key = normalizar_nome(nome_final)
 
-                jogador = mapa.get(key)
+                jogador = match_player(key, mapa)
 
                 if jogador:
                     atual = getattr(jogador, coluna_alvo) or 1000
