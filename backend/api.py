@@ -454,13 +454,16 @@ def import_tournament(
 
         for linha in linhas[linha_inicio_dados:]:
 
-            colunas = linha.find_all(["td", "th"])
+            colunas = linha.find_all("td")
 
-            if (
-                indice_nome >= len(colunas)
-                or indice_variacao >= len(colunas)
-            ):
-                continue
+            print("TOTAL COLUNAS:", len(colunas))
+
+            textos = [
+                c.get_text(strip=True)
+                for c in colunas
+            ]
+
+            print(textos)
 
             nome_raw = (
                 colunas[indice_nome]
