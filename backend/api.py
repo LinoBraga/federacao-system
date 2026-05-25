@@ -369,42 +369,32 @@ def import_tournament(
 # IDENTIFICA A LINHA DO CABEÇALHO
 # ==========================================
 
+       # Inicialize aqui
+        jogadores_atualizados = 0 
         indice_nome = None
         indice_variacao = None
         linha_inicio_dados = None
 
         for idx, linha in enumerate(linhas):
-
-            colunas_temp = [
-                td.get_text(strip=True).lower()
-                for td in linha.find_all("td")
-            ]
-
-            if not colunas_temp:
-                continue
-
+            # Adicione 'th' aqui, pois cabeçalhos no Chess-Results costumam ser <th>
+            colunas_temp = [td.get_text(strip=True).lower() for td in linha.find_all(["td", "th"])]
+            
             for i, col in enumerate(colunas_temp):
-
                 if "nome" in col or "name" in col:
                     indice_nome = i
-
                 if "rtg+/-" in col:
                     indice_variacao = i
 
-            # se encontrou os dois, salva a linha do cabeçalho
             if indice_nome is not None and indice_variacao is not None:
                 linha_inicio_dados = idx + 1
                 break
 
-        if indice_nome is None or indice_variacao is None:
-            raise HTTPException(
-                status_code=400,
-                detail="Não foi possível localizar Nome ou rtg+/-"
-            )
+        if linha_inicio_dados is None:
+            raise HTTPException(status_code=400, detail="Cabeçalho não encontrado.")
 
-        print("ÍNDICE NOME:", indice_nome)
-        print("ÍNDICE VARIAÇÃO:", indice_variacao)
-        print("COMEÇO DOS DADOS:", linha_inicio_dados)
+        # Agora o resto do seu código...
+        for linha in linhas[linha_inicio_dados:]:
+            # ... processamento ...
 
         # ==========================================
         # PROCESSAMENTO DAS LINHAS
