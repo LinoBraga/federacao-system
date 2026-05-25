@@ -358,45 +358,38 @@ def import_excel(
 ):
     try:
         contents = file.file.read()
-
-        # 1. Lê sem cabeçalho fixo inicialmente
         df_raw = pd.read_excel(BytesIO(contents), engine="openpyxl", header=None)
 
-        # 2. Encontra a linha que contém o cabeçalho real (ex: onde tem "nome", "rk", "name")
-        # Isso varre a tabela procurando a primeira linha que contenha essas palavras
         mask = df_raw.apply(lambda row: row.astype(str).str.contains("nome|rk|name", case=False).any(), axis=1)
-        
         if not mask.any():
-            return {"error": "Não foi possível encontrar a linha de cabeçalho na tabela"}
+            return {"error": "Cabeçalho não encontrado no Excel"}
             
         idx_header = mask.idxmax()
-
-        # 3. Define o cabeçalho corretamente e descarta o que vem antes
         df = df_raw.iloc[idx_header + 1:].reset_index(drop=True)
-        df.columns = df_raw.iloc[idx_header].str.lower().str.strip()
+        df.columns = [str(c).lower().strip() for c in df_raw.iloc[idx_header]]
 
-        # Agora o seu código de encontrar colunas funciona perfeitamente:
-        df.columns = [str(c).strip().lower() for c in df.columns]
+        # --- DEBUG: O que o dataframe viu? ---
+        print(f"Colunas detectadas: {list(df.columns)}")
+        # -------------------------------------
 
-        def find_col(possiveis):
-            for p in possiveis:
-                for c in df.columns:
-                    if p in c:
-                        return c
-            return None
-
-        col_nome = find_col(["nome", "name", "player"])
-        col_var = find_col(["rtg", "+/-", "variacao", "var"])
+        # Lógica de processamento...
+        col_nome = next((c for c in df.columns if 'nome' in c or 'name' in c), None)
+        col_var = next((c for c in df.columns if 'rtg' in c or 'var' in c or '+/-' in c), None)
 
         if not col_nome or not col_var:
-            return {"error": "colunas não encontradas", "cols": list(df.columns)}
+            return {"error": "Colunas de nome ou variação não mapeadas"}
 
-        # ... resto do seu código de processamento (mapa, loop, update) segue igual
-        players = db.query(PlayerModel).all()
-        mapa = {normalizar(p.nome): p for p in players}
+        # ... (seu loop de update)
 
-        # [Aqui você mantém seu loop original de atualização...]
-        
+        resultado = {
+            "status": "Sucesso",
+            "atualizados": updated,
+            "ignorados": ignored,
+            "total_linhas": len(df)
+        }
+        print(f"Resultado da operação: {resultado}")
+        return resultado
+
     except Exception as e:
-        db.rollback()
-        return {"error": str(e)}
+        print(f"ERRO CRÍTICO: {str(e)}")
+        return {"error": f"Erro interno: {str(e)}"}
