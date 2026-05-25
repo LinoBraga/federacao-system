@@ -423,7 +423,7 @@ def import_tournament(
                 indice_nome is not None
                 and indice_variacao is not None
             ):
-                linha_inicio_dados = idx + 1
+                linha_inicio_dados = idx + 2
                 break
 
         if linha_inicio_dados is None:
@@ -466,6 +466,14 @@ def import_tournament(
                 colunas[indice_nome]
                 .get_text(strip=True)
             )
+            if nome_raw.upper() in [
+                "FED",
+                "NOME",
+                "NAME",
+                "ELO",
+                "RTG+/-"
+            ]:
+                continue
 
             variacao_texto = (
                 colunas[indice_variacao]
