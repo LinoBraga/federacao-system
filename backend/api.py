@@ -423,7 +423,7 @@ def import_tournament(
                 indice_nome is not None
                 and indice_variacao is not None
             ):
-                linha_inicio_dados = idx + 2
+                linha_inicio_dados = idx + 1
                 break
 
         if linha_inicio_dados is None:
