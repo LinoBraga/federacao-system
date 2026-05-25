@@ -370,27 +370,28 @@ def import_tournament(
         jogadores_atualizados = 0
 
         # 5. Processamento seguro de linhas
+        # 5. Processamento seguro de linhas
         for linha in linhas[linha_inicio_dados:]:
             colunas = linha.find_all("td")
             
+            # DIAGNÓSTICO: Se a linha for muito curta, o índice vai falhar
+            if len(colunas) <= max(indice_nome, indice_variacao):
+                # Isso vai nos dizer se a linha está sendo ignorada por ser curta demais
+                # print(f"DEBUG: Linha ignorada (muito curta). Colunas encontradas: {len(colunas)}")
+                continue
+
             try:
-                # Tenta extrair os dados
                 nome_raw = colunas[indice_nome].get_text(strip=True)
                 variacao_texto = colunas[indice_variacao].get_text(strip=True).replace(",", ".")
                 
+                # Se o nome estiver vazio, pula (linha de separação)
                 if not nome_raw: continue
+                
                 variacao = float(variacao_texto)
                 
-                # Limpeza e Normalização
-                partes = nome_raw.split(',')
-                nome_limpo = f"{partes[1].strip()} {partes[0].strip()}" if len(partes) > 1 else nome_raw
-                titulos = ["GM", "IM", "FM", "CM", "WGM", "WIM", "WFM", "WCM", "NM", "AFM", "AIM"]
-                nome_final = " ".join([p for p in nome_limpo.split() if p.upper() not in titulos])
+                # ... (resto da lógica de limpeza de nome)
                 
-                # Normalização
                 nome_normalizado = normalizar_nome(nome_final)
-                
-                # BUSCA NO MAPA
                 encontrado = mapa_jogadores.get(nome_normalizado)
                 
                 if encontrado:
@@ -399,12 +400,10 @@ def import_tournament(
                     jogadores_atualizados += 1
                     print(f"DEBUG: Sucesso! Atualizado: {encontrado.nome}")
                 else:
-                    # ESSE LOG É O QUE VAI NOS DAR A RESPOSTA
-                    print(f"DEBUG: NOME NÃO ENCONTRADO NO BANCO: '{nome_final}' (Normalizado: '{nome_normalizado}')")
+                    print(f"DEBUG: NOME NÃO ENCONTRADO NO BANCO: '{nome_final}'")
                     
             except Exception as e:
-                # Isso vai nos mostrar se alguma linha está dando erro inesperado
-                # print(f"DEBUG: Linha ignorada por erro: {e}")
+                print(f"DEBUG: Erro ao processar linha: {e}")
                 continue
                 
             # Limpeza e Normalização
