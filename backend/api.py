@@ -408,3 +408,6 @@ def import_tournament(
 
         db.commit()
         return {"status": "Sucesso", "message": f"{jogadores_atualizados} jogadores atualizados."}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
