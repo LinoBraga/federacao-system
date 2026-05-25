@@ -330,9 +330,6 @@ def import_tournament(
     token: str = Depends(verify_admin_token)
 ):
     try:
-        # =========================
-        # 1. REQUEST
-        # =========================
         headers = {"User-Agent": "Mozilla/5.0"}
         resposta = requests.get(payload.url, headers=headers)
 
@@ -341,37 +338,25 @@ def import_tournament(
 
         soup = BeautifulSoup(resposta.text, "html.parser")
 
-        # =========================
-        # 2. TIPO DE RATING
-        # =========================
         tipo = payload.tipo.lower().strip()
-
-        if tipo == "blitz":
-            coluna_alvo = "rating_blz"
-        elif tipo == "rapid":
-            coluna_alvo = "rating_rpd"
-        else:
-            coluna_alvo = "rating_std"
+        coluna_alvo = (
+            "rating_blz" if tipo == "blitz"
+            else "rating_rpd" if tipo == "rapid"
+            else "rating_std"
+        )
 
         print(f"IMPORTANDO PARA -> {coluna_alvo}")
 
-        # =========================
-        # 3. PEGAR TABELA CERTA
-        # =========================
-        tabelas = soup.find_all("table")
-
-        if not tabelas:
-            raise HTTPException(status_code=400, detail="Nenhuma tabela encontrada.")
-
-        tabela = max(tabelas, key=lambda t: len(t.find_all("tr")))
+        # pega maior tabela (ranking quase sempre é a maior mesmo)
+        tabela = max(soup.find_all("table"), key=lambda t: len(t.find_all("tr")))
         linhas = tabela.find_all("tr")
 
         # =========================
-        # 4. ACHAR CABEÇALHO
+        # acha cabeçalho
         # =========================
         indice_nome = None
         indice_variacao = None
-        linha_inicio_dados = None
+        linha_inicio = None
 
         for idx, linha in enumerate(linhas):
             cols = [c.get_text(strip=True).lower() for c in linha.find_all(["td", "th"])]
@@ -379,91 +364,77 @@ def import_tournament(
             for i, col in enumerate(cols):
                 if "nome" in col or "name" in col:
                     indice_nome = i
-                if "rtg+/-" in col:
+                if "rtg" in col:   # MAIS FLEXÍVEL QUE "rtg+/-"
                     indice_variacao = i
 
             if indice_nome is not None and indice_variacao is not None:
-                linha_inicio_dados = idx + 1
+                linha_inicio = idx + 1
                 break
 
-        if linha_inicio_dados is None:
+        if linha_inicio is None:
             raise HTTPException(status_code=400, detail="Cabeçalho não encontrado.")
 
-        print(f"ÍNDICE NOME: {indice_nome}")
-        print(f"ÍNDICE VARIAÇÃO: {indice_variacao}")
+        # =========================
+        # banco em cache
+        # =========================
+        jogadores = db.query(PlayerModel).all()
+        mapa = {normalizar_nome(p.nome): p for p in jogadores}
+
+        atualizados = 0
 
         # =========================
-        # 5. BANCO (CACHE)
+        # processamento
         # =========================
-        todos = db.query(PlayerModel).all()
-        mapa = {normalizar_nome(p.nome): p for p in todos}
+        for linha in linhas[linha_inicio:]:
+            cols = linha.find_all("td")
 
-        jogadores_atualizados = 0
-
-        # =========================
-        # 6. PROCESSAMENTO SEGURO
-        # =========================
-        for linha in linhas[linha_inicio_dados:]:
-            colunas = linha.find_all("td")
-
-            # pula linhas inválidas (menus, rodapé etc)
-            if len(colunas) <= max(indice_nome, indice_variacao):
+            if len(cols) <= max(indice_nome, indice_variacao):
                 continue
 
             try:
-                nome_raw = colunas[indice_nome].get_text(strip=True)
-                variacao_raw = colunas[indice_variacao].get_text(strip=True).replace(",", ".")
+                nome_raw = cols[indice_nome].get_text(strip=True)
+                var_raw = cols[indice_variacao].get_text(strip=True).replace(",", ".")
 
-                if not nome_raw or not variacao_raw:
+                if not nome_raw:
                     continue
 
-                variacao = float(variacao_raw)
+                variacao = float(var_raw)
 
-                # =========================
-                # limpeza do nome Chess-Results
-                # =========================
-                partes = nome_raw.split(",")
-
-                if len(partes) == 2:
-                    nome_limpo = f"{partes[1].strip()} {partes[0].strip()}"
+                # nome chess-results -> "Sobrenome, Nome"
+                if "," in nome_raw:
+                    partes = nome_raw.split(",")
+                    nome = f"{partes[1].strip()} {partes[0].strip()}"
                 else:
-                    nome_limpo = nome_raw
+                    nome = nome_raw
 
+                # remove títulos
                 titulos = ["GM","IM","FM","CM","WGM","WIM","WFM","WCM","NM","AFM","AIM"]
+                nome_final = " ".join([p for p in nome.split() if p.upper() not in titulos])
 
-                nome_final = " ".join([
-                    p for p in nome_limpo.split()
-                    if p.upper() not in titulos
-                ])
+                key = normalizar_nome(nome_final)
 
-                nome_norm = normalizar_nome(nome_final)
-
-                jogador = mapa.get(nome_norm)
+                jogador = mapa.get(key)
 
                 if jogador:
                     atual = getattr(jogador, coluna_alvo) or 1000
                     novo = round(atual + variacao)
 
                     setattr(jogador, coluna_alvo, novo)
-                    jogadores_atualizados += 1
+                    atualizados += 1
 
-                    print(f"DEBUG: OK {jogador.nome} ({atual} -> {novo})")
+                    print(f"DEBUG: {jogador.nome} {atual} -> {novo}")
 
                 else:
                     print(f"DEBUG: NÃO ENCONTRADO -> {nome_final}")
 
-            except Exception as e:
-                print(f"DEBUG: ERRO LINHA -> {e}")
+            except:
                 continue
 
-        # =========================
-        # 7. SALVAR
-        # =========================
         db.commit()
 
         return {
             "status": "Sucesso",
-            "message": f"{jogadores_atualizados} jogadores atualizados.",
+            "message": f"{atualizados} jogadores atualizados.",
             "tipo": coluna_alvo
         }
 
