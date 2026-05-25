@@ -432,38 +432,53 @@ def import_excel(
         # ---------------------------
         # 4. PROCESSAMENTO REAL
         # ---------------------------
+       # ---------------------------
+        # 4. PROCESSAMENTO REAL (MELHORADO)
+        # ---------------------------
         for _, row in data.iterrows():
             try:
                 nome_raw = str(row[col_nome]).strip()
                 var_raw = str(row[col_var]).strip().replace(",", ".")
 
-                # Ignora linhas em branco ou inválidas do Excel
-                if nome_raw == "" or nome_raw.lower() == "nan" or var_raw.lower() == "nan":
+                if nome_raw == "" or nome_raw.lower() == "nan":
                     ignored += 1
                     continue
 
-                # Limpa e converte a variação para float seguro
                 variacao = float(re.sub(r"[^0-9\.-]", "", var_raw))
 
-                nome_norm = normalizar(nome_raw)
+                # --- LÓGICA DE NORMALIZAÇÃO E TENTATIVAS ---
+                def tentar_encontrar(nome):
+                    n_norm = normalizar(nome)
+                    # 1. Busca exata
+                    p = mapa.get(n_norm)
+                    # 2. Busca Fuzzy
+                    if not p:
+                        p = match_player(n_norm, mapa)
+                    return p
 
-                # Busca Híbrida (Exata -> Fuzzy)
-                player = mapa.get(nome_norm)
-                if not player:
-                    player = match_player(nome_norm, mapa)
+                # Tentativa 1: O nome original (do jeito que veio)
+                player = tentar_encontrar(nome_raw)
+
+                # Tentativa 2: Se tiver vírgula, tenta inverter "Sobrenome, Nome" -> "Nome Sobrenome"
+                if not player and "," in nome_raw:
+                    partes = nome_raw.split(",", 1)
+                    if len(partes) == 2:
+                        nome_invertido = f"{partes[1].strip()} {partes[0].strip()}"
+                        player = tentar_encontrar(nome_invertido)
 
                 if not player:
-                    print(f"MISS: Jogador não encontrado -> {nome_raw}")
+                    print(f"MISS: Não achou nem normal nem invertido -> {nome_raw}")
                     ignored += 1
                     continue
+                # -------------------------------------------
 
-                # Atualiza os valores no objeto do banco
+                # Atualiza os valores
                 atual = getattr(player, coluna_db) or 1000
                 novo = round(atual + variacao)
                 setattr(player, coluna_db, novo)
                 
                 updated += 1
-                print(f"OK: {player.nome} {atual} -> {novo}")
+                print(f"OK: {player.nome} ({atual} -> {novo})")
 
             except Exception as e:
                 print("ERRO LINHA:", e)
