@@ -338,119 +338,96 @@ def match_player(nome_norm, mapa):
             best = player
 
     return best if best_score >= 2 else None
-@app.post("/admin/import-tournament", tags=["Admin"])
-def import_tournament(payload, db: Session = Depends(get_db)):
-
+@app.post("/admin/import-tournament", tags=["Administração (Requer Token)"])
+def import_tournament(
+    payload: TournamentImportRequest, 
+    db: Session = Depends(get_db),
+    token: str = Depends(verify_admin_token)
+):
     import requests
     from bs4 import BeautifulSoup
 
+    # 1. Requisição
     r = requests.get(payload.url, headers={"User-Agent": "Mozilla/5.0"})
     if r.status_code != 200:
-        raise HTTPException(400, "Erro ao acessar torneio")
+        raise HTTPException(status_code=400, detail="Erro ao acessar o link do torneio")
 
     soup = BeautifulSoup(r.text, "html.parser")
+    tipo = payload.tipo.lower().strip()
+    coluna = "rating_blz" if tipo == "blitz" else ("rating_rpd" if tipo == "rapid" else "rating_std")
 
-    tipo = payload.tipo.lower()
-    coluna = (
-        "rating_blz" if tipo == "blitz"
-        else "rating_rpd" if tipo == "rapid"
-        else "rating_std"
-    )
-
-    tabela = max(soup.find_all("table"), key=lambda t: len(t.find_all("tr")))
+    # 2. Localização segura da tabela
+    tabelas = [t for t in soup.find_all("table") if t.find_all("tr")]
+    if not tabelas:
+        raise HTTPException(status_code=400, detail="Nenhuma tabela com dados encontrada na página")
+    
+    tabela = max(tabelas, key=lambda t: len(t.find_all("tr")))
     linhas = tabela.find_all("tr")
 
-    # ======================
-    # detectar colunas
-    # ======================
+    # 3. Detectar índices
     idx_nome = None
     idx_var = None
     start = None
 
     for i, tr in enumerate(linhas):
-        cols = [c.get_text(strip=True).lower() for c in tr.find_all(["td","th"])]
-
-        for j, c in enumerate(cols):
-            if "nome" in c:
-                idx_nome = j
-            if "rtg" in c:
-                idx_var = j
-
+        cols_text = [c.get_text(strip=True).lower() for c in tr.find_all(["td", "th"])]
+        for j, c in enumerate(cols_text):
+            if "nome" in c or "name" in c: idx_nome = j
+            if "rtg" in c: idx_var = j
+        
         if idx_nome is not None and idx_var is not None:
             start = i + 1
             break
 
     if start is None:
-        raise HTTPException(400, "Tabela inválida")
+        raise HTTPException(status_code=400, detail="Cabeçalhos 'Nome' ou 'Rtg' não encontrados")
 
-    # ======================
-    # banco
-    # ======================
+    # 4. Carregar jogadores do banco
     players = db.query(PlayerModel).all()
-
-    mapa = {}
-    for p in players:
-        k = normalizar(p.nome)
-        mapa[k] = p
-
+    mapa = {normalizar(p.nome): p for p in players}
     updated = 0
+    titulos = {"GM", "IM", "FM", "CM", "WGM", "WIM", "WFM", "WCM", "NM", "AFM", "AIM"}
 
-    # ======================
-    # processar
-    # ======================
+    # 5. Processar linhas
     for tr in linhas[start:]:
         cols = tr.find_all("td")
-
         if len(cols) <= max(idx_nome, idx_var):
             continue
 
         try:
             nome_raw = cols[idx_nome].get_text(strip=True)
             var_raw = cols[idx_var].get_text(strip=True).replace(",", ".")
-
+            
             if not nome_raw or not var_raw:
                 continue
 
             variacao = float(var_raw)
 
-            # chess-results format
+            # Limpeza de nome
             if "," in nome_raw:
                 a, b = nome_raw.split(",", 1)
-                nome = f"{b.strip()} {a.strip()}"
+                nome_limpo = f"{b.strip()} {a.strip()}"
             else:
-                nome = nome_raw
-
-            nome = " ".join(nome.split())
-
-            nome = " ".join([
-                x for x in nome.split()
-                if x.upper() not in ["GM","IM","FM","CM","WGM","WIM","WFM","WCM","NM","AFM","AIM"]
-            ])
-
-            key = normalizar(nome)
-
-            player = match_player(key, mapa)
+                nome_limpo = nome_raw
+            
+            # Remover títulos
+            nome_final = " ".join([x for x in nome_limpo.split() if x.upper() not in titulos])
+            
+            # Match via função inteligente
+            player = match_player(normalizar(nome_final), mapa)
 
             if player:
                 atual = getattr(player, coluna) or 1000
                 novo = round(atual + variacao)
-
                 setattr(player, coluna, novo)
                 updated += 1
-
-                print(f"OK: {player.nome} {atual} -> {novo}")
-
+                print(f"OK: {player.nome} | {atual} -> {novo}")
             else:
-                print(f"MISS: {nome}")
+                print(f"MISS: {nome_final}")
 
         except Exception as e:
-            print("ERRO:", e)
+            print(f"ERRO linha: {e}")
             continue
 
     db.commit()
-
-    return {
-        "status": "OK",
-        "updated": updated,
-        "total_db": len(players)
-    }
+    return {"status": "OK", "updated": updated, "total_db": len(players)}
