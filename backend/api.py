@@ -349,47 +349,148 @@ def match_player(nome, mapa):
 # =========================
 # IMPORTADOR EXCEL
 # =========================
-@app.post("/admin/import-excel")
+@router.post("/admin/import-excel")
 def import_excel(
-    file: UploadFile,
+    file: UploadFile = File(...),  # Ajustado para garantir o recebimento correto do form-data
     tipo: str = "std",
     db: Session = Depends(get_db),
     token: str = Depends(verify_admin_token)
 ):
+    updated = 0
+    ignored = 0
+
     try:
+        # ---------------------------
+        # 1. LER ARQUIVO
+        # ---------------------------
         contents = file.file.read()
-        df_raw = pd.read_excel(BytesIO(contents), engine="openpyxl", header=None)
+        df_raw = pd.read_excel(
+            BytesIO(contents),
+            engine="openpyxl",
+            header=None
+        )
 
-        mask = df_raw.apply(lambda row: row.astype(str).str.contains("nome|rk|name", case=False).any(), axis=1)
+        print("SHAPE RAW:", df_raw.shape)
+
+        # ---------------------------
+        # 2. ACHAR HEADER DINAMICAMENTE
+        # ---------------------------
+        mask = df_raw.apply(
+            lambda row: row.astype(str)
+            .str.contains(r"nome|name|rk|rating", case=False, na=False)
+            .any(),
+            axis=1
+        )
+
         if not mask.any():
-            return {"error": "Cabeçalho não encontrado no Excel"}
-            
+            return {
+                "status": "error",
+                "error": "Cabeçalho não encontrado no Excel"
+            }
+
         idx_header = mask.idxmax()
-        df = df_raw.iloc[idx_header + 1:].reset_index(drop=True)
-        df.columns = [str(c).lower().strip() for c in df_raw.iloc[idx_header]]
 
-        # --- DEBUG: O que o dataframe viu? ---
-        print(f"Colunas detectadas: {list(df.columns)}")
-        # -------------------------------------
+        header_row = df_raw.iloc[idx_header].fillna("").astype(str)
+        data = df_raw.iloc[idx_header + 1:].reset_index(drop=True)
 
-        # Lógica de processamento...
-        col_nome = next((c for c in df.columns if 'nome' in c or 'name' in c), None)
-        col_var = next((c for c in df.columns if 'rtg' in c or 'var' in c or '+/-' in c), None)
+        # Limpar colunas inválidas
+        data.columns = [
+            str(c).lower().strip() if c is not None else ""
+            for c in header_row
+        ]
+
+        # Remove colunas vazias tipo "nan"
+        data = data.loc[:, data.columns != ""]
+        data = data.loc[:, ~data.columns.str.contains("^nan$", na=False)]
+
+        print("COLUNAS DETECTADAS:", data.columns.tolist())
+
+        # ---------------------------
+        # 3. MAPEAR COLUNAS E BANCO DE DADOS
+        # ---------------------------
+        col_nome = next((c for c in data.columns if "nome" in c or "name" in c), None)
+        col_var = next((c for c in data.columns if "rtg" in c or "var" in c or "+/-" in c), None)
 
         if not col_nome or not col_var:
-            return {"error": "Colunas de nome ou variação não mapeadas"}
+            return {
+                "status": "error",
+                "error": "Colunas não mapeadas",
+                "cols_detectadas": data.columns.tolist()
+            }
 
-        # ... (seu loop de update)
+        # Define a coluna correta do banco de dados
+        coluna_db = (
+            "rating_blz" if tipo == "blitz"
+            else "rating_rpd" if tipo == "rapid"
+            else "rating_std"
+        )
 
+        # Baixa os jogadores e cria o mapa de busca rápida
+        players = db.query(PlayerModel).all()
+        mapa = {normalizar(p.nome): p for p in players}
+
+        # ---------------------------
+        # 4. PROCESSAMENTO REAL
+        # ---------------------------
+        for _, row in data.iterrows():
+            try:
+                nome_raw = str(row[col_nome]).strip()
+                var_raw = str(row[col_var]).strip().replace(",", ".")
+
+                # Ignora linhas em branco ou inválidas do Excel
+                if nome_raw == "" or nome_raw.lower() == "nan" or var_raw.lower() == "nan":
+                    ignored += 1
+                    continue
+
+                # Limpa e converte a variação para float seguro
+                variacao = float(re.sub(r"[^0-9\.-]", "", var_raw))
+
+                nome_norm = normalizar(nome_raw)
+
+                # Busca Híbrida (Exata -> Fuzzy)
+                player = mapa.get(nome_norm)
+                if not player:
+                    player = match_player(nome_norm, mapa)
+
+                if not player:
+                    print(f"MISS: Jogador não encontrado -> {nome_raw}")
+                    ignored += 1
+                    continue
+
+                # Atualiza os valores no objeto do banco
+                atual = getattr(player, coluna_db) or 1000
+                novo = round(atual + variacao)
+                setattr(player, coluna_db, novo)
+                
+                updated += 1
+                print(f"OK: {player.nome} {atual} -> {novo}")
+
+            except Exception as e:
+                print("ERRO LINHA:", e)
+                ignored += 1
+                continue
+
+        # Salva as alterações de todas as linhas processadas com sucesso
+        db.commit()
+
+        # ---------------------------
+        # 5. RESPOSTA FINAL (Garantindo tipos nativos)
+        # ---------------------------
         resultado = {
-            "status": "Sucesso",
-            "atualizados": updated,
-            "ignorados": ignored,
-            "total_linhas": len(df)
+            "status": "success",
+            "tipo": tipo,
+            "atualizados": int(updated),
+            "ignorados": int(ignored),
+            "total_linhas": int(len(data))
         }
-        print(f"Resultado da operação: {resultado}")
+
+        print("RESULTADO:", resultado)
         return resultado
 
     except Exception as e:
-        print(f"ERRO CRÍTICO: {str(e)}")
-        return {"error": f"Erro interno: {str(e)}"}
+        db.rollback()
+        print("ERRO CRÍTICO:", str(e))
+        return {
+            "status": "error",
+            "error": str(e)
+        }
