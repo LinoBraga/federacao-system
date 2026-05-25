@@ -330,29 +330,83 @@ def import_tournament(
     token: str = Depends(verify_admin_token)
 ):
     try:
-        # 1. Requisição inicial
+        # =========================
+        # 1. REQUEST
+        # =========================
         headers = {"User-Agent": "Mozilla/5.0"}
         resposta = requests.get(payload.url, headers=headers)
+
         if resposta.status_code != 200:
             raise HTTPException(status_code=400, detail="Erro ao acessar o link.")
 
         soup = BeautifulSoup(resposta.text, "html.parser")
-        tipo = payload.tipo.lower().strip()
-        coluna_alvo = "rating_blz" if tipo == "blitz" else ("rating_rpd" if tipo == "rapid" else "rating_std")
 
-        # 2. Localização da tabela correta
+        # =========================
+        # 2. TIPO DE RATING
+        # =========================
+        tipo = payload.tipo.lower().strip()
+
+        if tipo == "blitz":
+            coluna_alvo = "rating_blz"
+        elif tipo == "rapid":
+            coluna_alvo = "rating_rpd"
+        else:
+            coluna_alvo = "rating_std"
+
+        print(f"IMPORTANDO PARA -> {coluna_alvo}")
+
+        # =========================
+        # 3. PEGAR TABELA CERTA
+        # =========================
         tabelas = soup.find_all("table")
+
+        if not tabelas:
+            raise HTTPException(status_code=400, detail="Nenhuma tabela encontrada.")
+
         tabela = max(tabelas, key=lambda t: len(t.find_all("tr")))
         linhas = tabela.find_all("tr")
 
-        # 3. Detecção dinâmica do cabeçalho
+        # =========================
+        # 4. ACHAR CABEÇALHO
+        # =========================
         indice_nome = None
         indice_variacao = None
         linha_inicio_dados = None
 
-        for idx, linha in enumerate(linhas[linha_inicio_dados:]):
+        for idx, linha in enumerate(linhas):
+            cols = [c.get_text(strip=True).lower() for c in linha.find_all(["td", "th"])]
+
+            for i, col in enumerate(cols):
+                if "nome" in col or "name" in col:
+                    indice_nome = i
+                if "rtg+/-" in col:
+                    indice_variacao = i
+
+            if indice_nome is not None and indice_variacao is not None:
+                linha_inicio_dados = idx + 1
+                break
+
+        if linha_inicio_dados is None:
+            raise HTTPException(status_code=400, detail="Cabeçalho não encontrado.")
+
+        print(f"ÍNDICE NOME: {indice_nome}")
+        print(f"ÍNDICE VARIAÇÃO: {indice_variacao}")
+
+        # =========================
+        # 5. BANCO (CACHE)
+        # =========================
+        todos = db.query(PlayerModel).all()
+        mapa = {normalizar_nome(p.nome): p for p in todos}
+
+        jogadores_atualizados = 0
+
+        # =========================
+        # 6. PROCESSAMENTO SEGURO
+        # =========================
+        for linha in linhas[linha_inicio_dados:]:
             colunas = linha.find_all("td")
 
+            # pula linhas inválidas (menus, rodapé etc)
             if len(colunas) <= max(indice_nome, indice_variacao):
                 continue
 
@@ -365,60 +419,54 @@ def import_tournament(
 
                 variacao = float(variacao_raw)
 
-                # limpeza nome
-                partes = nome_raw.split(',')
-                nome_limpo = f"{partes[1].strip()} {partes[0].strip()}" if len(partes) > 1 else nome_raw
+                # =========================
+                # limpeza do nome Chess-Results
+                # =========================
+                partes = nome_raw.split(",")
+
+                if len(partes) == 2:
+                    nome_limpo = f"{partes[1].strip()} {partes[0].strip()}"
+                else:
+                    nome_limpo = nome_raw
 
                 titulos = ["GM","IM","FM","CM","WGM","WIM","WFM","WCM","NM","AFM","AIM"]
-                nome_final = " ".join([p for p in nome_limpo.split() if p.upper() not in titulos])
 
-                nome_normalizado = normalizar_nome(nome_final)
+                nome_final = " ".join([
+                    p for p in nome_limpo.split()
+                    if p.upper() not in titulos
+                ])
 
-                encontrado = mapa_jogadores.get(nome_normalizado)
+                nome_norm = normalizar_nome(nome_final)
 
-                if encontrado:
-                    rating_atual = getattr(encontrado, coluna_alvo) or 1000
-                    novo_rating = round(rating_atual + variacao)
+                jogador = mapa.get(nome_norm)
 
-                    setattr(encontrado, coluna_alvo, novo_rating)
+                if jogador:
+                    atual = getattr(jogador, coluna_alvo) or 1000
+                    novo = round(atual + variacao)
 
+                    setattr(jogador, coluna_alvo, novo)
                     jogadores_atualizados += 1
-                    print(f"DEBUG: Sucesso! {encontrado.nome} ({rating_atual} -> {novo_rating})")
+
+                    print(f"DEBUG: OK {jogador.nome} ({atual} -> {novo})")
 
                 else:
-                    print(f"DEBUG: NÃO ENCONTRADO -> {nome_final} | {nome_normalizado}")
+                    print(f"DEBUG: NÃO ENCONTRADO -> {nome_final}")
 
             except Exception as e:
-                print(f"DEBUG: ERRO LINHA {idx}: {e}")
-                continue
-                
-            # Limpeza e Normalização
-                partes = nome_raw.split(',')
-                nome_limpo = f"{partes[1].strip()} {partes[0].strip()}" if len(partes) > 1 else nome_raw
-                titulos = ["GM", "IM", "FM", "CM", "WGM", "WIM", "WFM", "WCM", "NM", "AFM", "AIM"]
-                nome_final = " ".join([p for p in nome_limpo.split() if p.upper() not in titulos])
-                
-                # Normalização antes do match
-                nome_normalizado = normalizar_nome(nome_final)
-                
-                # Match no banco
-                encontrado = mapa_jogadores.get(nome_normalizado)
-                
-                if encontrado:
-                    rating_atual = getattr(encontrado, coluna_alvo) or 1000
-                    setattr(encontrado, coluna_alvo, round(rating_atual + variacao))
-                    jogadores_atualizados += 1
-                    print(f"DEBUG: Sucesso! Atualizado: {encontrado.nome}")
-                else:
-                    # Log detalhado para você corrigir o banco de dados
-                    print(f"DEBUG: NOME NO TORNEIO (Normalizado): '{nome_normalizado}'")
-                    print(f"DEBUG: CHAVES DISPONÍVEIS NO BANCO (Exemplo): {list(mapa_jogadores.keys())[:5]}")
-
-            except (IndexError, ValueError):
+                print(f"DEBUG: ERRO LINHA -> {e}")
                 continue
 
+        # =========================
+        # 7. SALVAR
+        # =========================
         db.commit()
-        return {"status": "Sucesso", "message": f"{jogadores_atualizados} jogadores atualizados."}
+
+        return {
+            "status": "Sucesso",
+            "message": f"{jogadores_atualizados} jogadores atualizados.",
+            "tipo": coluna_alvo
+        }
+
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
