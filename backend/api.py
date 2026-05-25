@@ -20,7 +20,7 @@ from difflib import SequenceMatcher
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-router = APIRouter()
+
 
 # Ferramentas do banco:
 from sqlalchemy import create_engine, Column, Integer, String, text
@@ -349,7 +349,7 @@ def match_player(nome, mapa):
 # =========================
 # IMPORTADOR EXCEL
 # =========================
-@router.post("/admin/import-excel")
+@app.post("/admin/import-excel")
 def import_excel(
     file: UploadFile = File(...),  # Ajustado para garantir o recebimento correto do form-data
     tipo: str = "std",
