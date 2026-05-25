@@ -347,8 +347,8 @@ def import_tournament(
         print(f"IMPORTANDO PARA -> {coluna_alvo}")
 
         # ==========================================
-        # ENCONTRA A MAIOR TABELA
-        # ==========================================
+# ENCONTRA A TABELA CERTA
+# ==========================================
 
         tabelas = soup.find_all("table")
 
@@ -365,7 +365,31 @@ def import_tournament(
 
         linhas = tabela.find_all("tr")
 
-        jogadores_atualizados = 0
+        # ==========================================
+        # IDENTIFICA AS COLUNAS
+        # ==========================================
+
+        cabecalho = [
+            th.get_text(strip=True).lower()
+            for th in linhas[0].find_all(["th", "td"])
+        ]
+
+        indice_nome = None
+        indice_variacao = None
+
+        for i, col in enumerate(cabecalho):
+
+            if "nome" in col or "name" in col:
+                indice_nome = i
+
+            if "rtg+/-" in col:
+                indice_variacao = i
+
+        if indice_nome is None or indice_variacao is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Não foi possível localizar Nome ou rtg+/-"
+            )
 
         # ==========================================
         # PROCESSAMENTO DAS LINHAS
@@ -375,31 +399,27 @@ def import_tournament(
         # PROCESSAMENTO DAS LINHAS (NOVA LÓGICA ROBUSTA)
         # ==========================================
         for linha in linhas[1:]:
+
             colunas = linha.find_all("td")
-            if len(colunas) < 5: continue 
 
-            # 1. ACHA O NOME (Procura a coluna que tem vírgula, ex: "Silva, João")
-            nome_raw = ""
-            for col in colunas:
-                texto = col.text.strip()
-                if "," in texto and len(texto) > 5:
-                    nome_raw = texto
-                    break
-            
-            if not nome_raw: continue
+            if len(colunas) <= max(indice_nome, indice_variacao):
+                continue
 
-            # 2. ACHA A VARIAÇÃO (Procura da direita para a esquerda pelo primeiro número)
-            variacao = None
-            for col in reversed(colunas):
-                texto = col.text.strip().replace(",", ".")
-                # Verifica se é um número (positivo ou negativo)
-                try:
-                    variacao = float(texto)
-                    break 
-                except ValueError:
-                    continue
-            
-            if variacao is None: continue
+            nome_raw = colunas[indice_nome].get_text(strip=True)
+
+            variacao_texto = (
+                colunas[indice_variacao]
+                .get_text(strip=True)
+                .replace(",", ".")
+            )  
+
+            if not nome_raw or not variacao_texto:
+                continue
+
+            try:
+                variacao = float(variacao_texto)
+            except:
+                continue
 
             # 3. CONVERTE "Sobrenome, Nome" para "Nome Sobrenome"
             # Isso facilita o match com o seu banco de dados
