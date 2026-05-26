@@ -1,26 +1,18 @@
 import os
 import csv
 import requests
-from io import StringIO
+from io import StringIO, BytesIO
 from typing import List
 import pandas as pd
-from io import BytesIO
 from pydantic import BaseModel
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 from fastapi.responses import StreamingResponse
-from bs4 import BeautifulSoup
-from difflib import SequenceMatcher
-from fastapi import UploadFile, File, Depends, HTTPException
 import re
 import unicodedata
 from collections import defaultdict
 from difflib import SequenceMatcher
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-
-
 
 # Ferramentas do banco:
 from sqlalchemy import create_engine, Column, Integer, String, text
@@ -44,7 +36,6 @@ else:
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-
 # ==========================================
 # MODELO DO BANCO DE DADOS (SQLAlchemy)
 # ==========================================
@@ -59,7 +50,6 @@ class PlayerModel(Base):
     rating_blz = Column(Integer, default=1000)
 
 Base.metadata.create_all(bind=engine)
-
 
 # ==========================================
 # 2. SCHEMAS DE DADOS (Pydantic)
@@ -82,11 +72,9 @@ class RatingUpdate(BaseModel):
     rating_rapid: int = None
     rating_blitz: int = None
 
-# Modelo criado para receber a URL do Chess-Results com segurança
 class TournamentImportRequest(BaseModel):
     url: str
     tipo: str
-
 
 # ==========================================
 # 3. CONFIGURAÇÃO DA API (FastAPI)
@@ -104,7 +92,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 # ==========================================
 # 4. DEPENDÊNCIAS E TRAVAS DE SEGURANÇA
@@ -126,7 +113,6 @@ def verify_admin_token(token_enviado: str = Depends(header_scheme)):
             detail="Acesso negado: Token de administrador inválido ou ausente."
         )
     return token_enviado
-
 
 # ==========================================
 # 5. ROTAS DA API
@@ -174,15 +160,12 @@ def import_fpbx_status():
 def home():
     return {"message": "API da Federação Paraibana de Xadrez online!"}
 
-# 1. Rota para quando o usuário clicar em "Todos" ou carregar a página inicialmente
 @app.get("/ranking", tags=["Consulta Pública"])
 def get_ranking_default(db: Session = Depends(get_db)):
-    # Retorna o padrão (std) para a chamada inicial do front
     query = text("SELECT id, nome, clube, rating_std, rating_rpd, rating_blz FROM players ORDER BY rating_std DESC")
     result = db.execute(query).fetchall()
     return format_players(result)
 
-# 2. Rota dinâmica para os botões de ritmo (o que você já tem)
 @app.get("/ranking/{ritmo}", tags=["Consulta Pública"])
 def get_ranking_by_ritmo(ritmo: str, db: Session = Depends(get_db)):
     colunas = {
@@ -199,7 +182,6 @@ def get_ranking_by_ritmo(ritmo: str, db: Session = Depends(get_db)):
     result = db.execute(query).fetchall()
     return format_players(result)
 
-# Função auxiliar para não repetir código
 def format_players(result):
     players_list = []
     for row in result:
@@ -212,6 +194,7 @@ def format_players(result):
             "rating_blz": int(row[5] or 1800)
         })
     return players_list
+
 @app.get("/player/{player_id}", response_model=PlayerResponse, tags=["Consulta Pública"])
 def get_player(player_id: int, db: Session = Depends(get_db)):
     player = db.query(PlayerModel).filter(PlayerModel.id == player_id).first()
@@ -219,61 +202,43 @@ def get_player(player_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Enxadrista não encontrado.")
     return player
 
-
 # --- ROTAS PROTEGIDAS (Exigem o Token de Admin) ---
 
-@app.post("/admin/players", response_model=PlayerResponse, status_code=status.HTTP_201_CREATED, tags=["Administração (Requer Token)"])
-def create_player(
-    player: PlayerBase, 
-    db: Session = Depends(get_db), 
-    token: str = Depends(verify_admin_token)
-):
+@app.post("/admin/players", response_model=PlayerResponse, status_code=status.HTTP_201_CREATED, tags=["Administração"])
+def create_player(player: PlayerBase, db: Session = Depends(get_db), token: str = Depends(verify_admin_token)):
     db_player = PlayerModel(**player.dict())
     db.add(db_player)
     db.commit()
     db.refresh(db_player)
     return db_player
-@app.post("/admin/sync-blitz-csv", tags=["Administração (Requer Token)"])
-def sync_blitz_csv(
-    payload: TournamentImportRequest, # Usamos o mesmo modelo para passar o link do CSV bruto se quiser, ou texto
-    db: Session = Depends(get_db),
-    token: str = Depends(verify_admin_token)
-):
-    """
-    Rota para forçar a leitura do CSV original e atualizar os ratings de Blitz
-    que ficaram para trás na primeira importação.
-    """
+
+@app.post("/admin/sync-blitz-csv", tags=["Administração"])
+def sync_blitz_csv(payload: TournamentImportRequest, db: Session = Depends(get_db), token: str = Depends(verify_admin_token)):
     try:
-        # Link do seu CSV (Pode ser o link do GitHub raw ou Google Drive público)
         headers = {"User-Agent": "Mozilla/5.0"}
         resposta = requests.get(payload.url, headers=headers)
         
         if resposta.status_code != 200:
             raise HTTPException(status_code=400, detail="Não foi possível ler o arquivo CSV informado.")
 
-        # Lendo o CSV vindo da URL
         conteudo = StringIO(resposta.text)
         leitor = csv.DictReader(conteudo)
         
         atualizados = 0
         
         for linha in leitor:
-            # Pegamos o nome e o rating de Blitz usando os nomes exatos do seu CSV
             nome = linha.get("Nome") or linha.get("nome")
             rating_blitz_texto = linha.get("Rating Blitz") or linha.get("Rating_Blitz")
             
             if not nome or not rating_blitz_texto:
                 continue
                 
-            # Limpa o texto tirando espaços ou traços e converte para número
             rating_blitz_texto = "".join(filter(str.isdigit, rating_blitz_texto.strip()))
-            
             if not rating_blitz_texto:
-                continue # Se a pessoa não tiver rating blitz no CSV, pula ela
+                continue
                 
             rating_blitz = int(rating_blitz_texto)
 
-            # Atualiza direto na coluna certa do Neon buscando pelo nome do enxadrista
             stmt = text("""
                 UPDATE players 
                 SET rating_blz = :rating 
@@ -290,13 +255,9 @@ def sync_blitz_csv(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Erro ao sincronizar: {str(e)}")
-@app.patch("/admin/players/{player_id}/ratings", response_model=PlayerResponse, tags=["Administração (Requer Token)"])
-def update_ratings(
-    player_id: int, 
-    ratings: RatingUpdate, 
-    db: Session = Depends(get_db), 
-    token: str = Depends(verify_admin_token)
-):
+
+@app.patch("/admin/players/{player_id}/ratings", response_model=PlayerResponse, tags=["Administração"])
+def update_ratings(player_id: int, ratings: RatingUpdate, db: Session = Depends(get_db), token: str = Depends(verify_admin_token)):
     db_player = db.query(PlayerModel).filter(PlayerModel.id == player_id).first()
     if not db_player:
         raise HTTPException(status_code=404, detail="Enxadrista não encontrado.")
@@ -310,48 +271,28 @@ def update_ratings(
     return db_player
 
 
-# 🚀 ROTA DE IMPORTAÇÃO AUTOMÁTICA VIA LINK DO CHESS-RESULTS
-TORNEIOS_PROCESSADOS = set()
-import re
-import unicodedata
-from collections import defaultdict
-from difflib import SequenceMatcher
-
-# ----------------------------
-# NORMALIZAÇÃO FORTE
-# ----------------------------
+# 🚀 ROTA DE IMPORTAÇÃO AUTOMÁTICA VIA EXCEL
 def normalizar(nome: str):
     nome = unicodedata.normalize("NFKD", nome).encode("ASCII", "ignore").decode("utf-8")
     nome = re.sub(r"[^a-z\s]", " ", nome.lower())
     return " ".join(nome.split())
 
-
-# =========================
-# MATCH FUZZY
-# =========================
 def similarity(a, b):
     return SequenceMatcher(None, a, b).ratio()
 
-
 def match_player(nome, mapa):
     best = None
-    best_score = 0.82  # mais rígido pra evitar erro
-
+    best_score = 0.82
     for key, player in mapa.items():
         score = similarity(nome, key)
         if score > best_score:
             best_score = score
             best = player
-
     return best
 
-
-# =========================
-# IMPORTADOR EXCEL
-# =========================
 @app.post("/admin/import-excel")
 def import_excel(
-    file: UploadFile = File(...),  # Ajustado para garantir o recebimento correto do form-data
+    file: UploadFile = File(...),
     tipo: str = "std",
     db: Session = Depends(get_db),
     token: str = Depends(verify_admin_token)
@@ -360,106 +301,68 @@ def import_excel(
     ignored = 0
 
     try:
-        # ---------------------------
         # 1. LER ARQUIVO
-        # ---------------------------
         contents = file.file.read()
-        df_raw = pd.read_excel(
-            BytesIO(contents),
-            engine="openpyxl",
-            header=None
-        )
+        df_raw = pd.read_excel(BytesIO(contents), engine="openpyxl", header=None)
 
-        print("SHAPE RAW:", df_raw.shape)
-
-        # ---------------------------
         # 2. ACHAR HEADER DINAMICAMENTE
-        # ---------------------------
         mask = df_raw.apply(
-            lambda row: row.astype(str)
-            .str.contains(r"nome|name|rk|rating", case=False, na=False)
-            .any(),
+            lambda row: row.astype(str).str.contains(r"nome|name|rk|rating", case=False, na=False).any(),
             axis=1
         )
 
         if not mask.any():
-            return {
-                "status": "error",
-                "error": "Cabeçalho não encontrado no Excel"
-            }
+            return {"status": "error", "error": "Cabeçalho não encontrado no Excel"}
 
         idx_header = mask.idxmax()
-
         header_row = df_raw.iloc[idx_header].fillna("").astype(str)
         data = df_raw.iloc[idx_header + 1:].reset_index(drop=True)
 
-        # Limpar colunas inválidas
-        data.columns = [
-            str(c).lower().strip() if c is not None else ""
-            for c in header_row
-        ]
-
-        # Remove colunas vazias tipo "nan"
+        data.columns = [str(c).lower().strip() if c is not None else "" for c in header_row]
         data = data.loc[:, data.columns != ""]
         data = data.loc[:, ~data.columns.str.contains("^nan$", na=False)]
 
-        print("COLUNAS DETECTADAS:", data.columns.tolist())
-
-        # ---------------------------
         # 3. MAPEAR COLUNAS E BANCO DE DADOS
-        # ---------------------------
         col_nome = next((c for c in data.columns if "nome" in c or "name" in c), None)
         col_var = next((c for c in data.columns if "rtg" in c or "var" in c or "+/-" in c), None)
 
         if not col_nome or not col_var:
-            return {
-                "status": "error",
-                "error": "Colunas não mapeadas",
-                "cols_detectadas": data.columns.tolist()
-            }
+            return {"status": "error", "error": "Colunas não mapeadas", "cols_detectadas": data.columns.tolist()}
 
-        # Define a coluna correta do banco de dados
-        coluna_db = (
-            "rating_blz" if tipo == "blitz"
-            else "rating_rpd" if tipo == "rapid"
-            else "rating_std"
-        )
+        coluna_db = "rating_blz" if tipo == "blitz" else "rating_rpd" if tipo == "rapid" else "rating_std"
 
-        # Baixa os jogadores e cria o mapa de busca rápida
         players = db.query(PlayerModel).all()
         mapa = {normalizar(p.nome): p for p in players}
 
-        # ---------------------------
-        # 4. PROCESSAMENTO REAL
-        # ---------------------------
-       # ---------------------------
-        # 4. PROCESSAMENTO REAL (MELHORADO)
-        # ---------------------------
+        # 4. PROCESSAMENTO REAL (BLINDADO CONTRA VAZIOS)
         for _, row in data.iterrows():
             try:
                 nome_raw = str(row[col_nome]).strip()
-                var_raw = str(row[col_var]).strip().replace(",", ".")
+                
+                # Pega a variação crua, se for NaN/vazio, joga "0"
+                var_raw = str(row[col_var]).strip().replace(",", ".") if pd.notna(row[col_var]) else "0"
 
                 if nome_raw == "" or nome_raw.lower() == "nan":
                     ignored += 1
                     continue
 
-                variacao = float(re.sub(r"[^0-9\.-]", "", var_raw))
+                # Limpeza segura da variação
+                var_limpa = re.sub(r"[^0-9\.-]", "", var_raw)
+                if var_limpa == "" or var_limpa == "-" or var_limpa == ".":
+                    variacao = 0.0
+                else:
+                    variacao = float(var_limpa)
 
-                # --- LÓGICA DE NORMALIZAÇÃO E TENTATIVAS ---
                 def tentar_encontrar(nome):
                     n_norm = normalizar(nome)
-                    # 1. Busca exata
                     p = mapa.get(n_norm)
-                    # 2. Busca Fuzzy
                     if not p:
                         p = match_player(n_norm, mapa)
                     return p
 
-                # Tentativa 1: O nome original (do jeito que veio)
                 player = tentar_encontrar(nome_raw)
 
-                # Tentativa 2: Se tiver vírgula, tenta inverter "Sobrenome, Nome" -> "Nome Sobrenome"
+                # Tentativa 2: Nome invertido (Chess-Results format)
                 if not player and "," in nome_raw:
                     partes = nome_raw.split(",", 1)
                     if len(partes) == 2:
@@ -470,7 +373,6 @@ def import_excel(
                     print(f"MISS: Não achou nem normal nem invertido -> {nome_raw}")
                     ignored += 1
                     continue
-                # -------------------------------------------
 
                 # Atualiza os valores
                 atual = getattr(player, coluna_db) or 1000
@@ -485,13 +387,11 @@ def import_excel(
                 ignored += 1
                 continue
 
-        # Salva as alterações de todas as linhas processadas com sucesso
+        # Salva tudo no banco
         db.commit()
 
-        # ---------------------------
-        # 5. RESPOSTA FINAL (Garantindo tipos nativos)
-        # ---------------------------
-        resultado = {
+        # 5. RESPOSTA FINAL
+        return {
             "status": "success",
             "tipo": tipo,
             "atualizados": int(updated),
@@ -499,13 +399,7 @@ def import_excel(
             "total_linhas": int(len(data))
         }
 
-        print("RESULTADO:", resultado)
-        return resultado
-
     except Exception as e:
         db.rollback()
         print("ERRO CRÍTICO:", str(e))
-        return {
-            "status": "error",
-            "error": str(e)
-        }
+        return {"status": "error", "error": str(e)}
